@@ -1,0 +1,20 @@
+{
+  "name": "gqlcov-monorepo",
+  "private": true,
+  "license": "MIT",
+  "workspaces": [
+    "packages/*",
+    "examples/*"
+  ],
+  "scripts": {
+    "build": "tsc -b && chmod +x packages/cli/dist/bin.js",
+    "test": "vitest run",
+    "lint": "tsc -b --noEmit false",
+    "clean": "rm -rf packages/*/dist examples/*/dist packages/*/tsconfig.tsbuildinfo examples/*/tsconfig.tsbuildinfo"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  }
+}

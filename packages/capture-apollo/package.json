@@ -1,0 +1,15 @@
+{
+  "name": "@gqlcov/capture-apollo",
+  "version": "0.1.0",
+  "description": "Apollo Server plugin that writes every executed operation to a capture folder for gqlcov.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "files": ["dist"],
+  "scripts": { "build": "tsc -b" },
+  "dependencies": { "@gqlcov/core": "0.1.0" },
+  "peerDependencies": { "@apollo/server": ">=4", "graphql": "^16.0.0" },
+  "devDependencies": { "@apollo/server": "^5.0.0", "graphql": "^16.9.0" }
+}

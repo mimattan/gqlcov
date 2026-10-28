@@ -1,0 +1,11 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/core" },
+    { "path": "packages/capture-envelop" },
+    { "path": "packages/capture-apollo" },
+    { "path": "packages/capture-playwright" },
+    { "path": "packages/cli" },
+    { "path": "examples/yoga-e2e" }
+  ]
+}

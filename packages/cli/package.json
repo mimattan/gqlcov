@@ -1,0 +1,23 @@
+{
+  "name": "@gqlcov/cli",
+  "version": "0.1.0",
+  "description": "gqlcov command line: report, diff, gate and merge GraphQL schema coverage from captured operations.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "gqlcov": "./dist/bin.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b && chmod +x dist/bin.js"
+  },
+  "dependencies": {
+    "@gqlcov/core": "0.1.0",
+    "commander": "^12.1.0",
+    "graphql": "^16.9.0"
+  }
+}

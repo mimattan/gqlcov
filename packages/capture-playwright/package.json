@@ -1,0 +1,15 @@
+{
+  "name": "@gqlcov/capture-playwright",
+  "version": "0.1.0",
+  "description": "Playwright helper that records GraphQL requests sent by the browser under test, with no server change.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "files": ["dist"],
+  "scripts": { "build": "tsc -b" },
+  "dependencies": { "@gqlcov/core": "0.1.0" },
+  "peerDependencies": { "@playwright/test": ">=1.40" },
+  "devDependencies": { "@playwright/test": "^1.49.0" }
+}

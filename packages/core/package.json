@@ -1,0 +1,15 @@
+{
+  "name": "@gqlcov/core",
+  "version": "0.1.0",
+  "description": "GraphQL schema coverage from captured operations: output fields, arguments, input-type fields, enum values and value classes.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "files": ["dist"],
+  "scripts": { "build": "tsc -b" },
+  "peerDependencies": { "graphql": "^16.0.0" },
+  "devDependencies": { "graphql": "^16.9.0" },
+  "keywords": ["graphql", "coverage", "testing", "e2e", "schema"]
+}

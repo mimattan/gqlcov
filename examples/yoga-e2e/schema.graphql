@@ -1,0 +1,23 @@
+enum Surface { CLAY HARD GRASS INDOOR }
+enum Gender { M F X }
+
+input ScoreInput { games: Int!, tiebreak: Int }
+input PlayerFilter { clubId: ID, gender: Gender, minRating: Float, nameContains: String }
+input MatchInput { surface: Surface!, playerIds: [ID!]!, sets: [ScoreInput!], note: String }
+
+type Club { id: ID!, name: String!, courts: Int }
+type Player { id: ID!, name: String!, gender: Gender, rating: Float, club: Club }
+type Match { id: ID!, surface: Surface!, players: [Player!]!, sets: [Set!]!, note: String }
+type Set { games: Int!, tiebreak: Int }
+
+type Query {
+  player(id: ID!): Player
+  players(filter: PlayerFilter, first: Int = 20): [Player!]!
+  match(id: ID!): Match
+  clubs: [Club!]!
+}
+
+type Mutation {
+  createMatch(input: MatchInput!): Match!
+  renamePlayer(id: ID!, name: String!): Player!
+}

@@ -1,0 +1,17 @@
+{
+  "name": "@gqlcov/example-yoga-e2e",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b",
+    "e2e": "rm -rf .gqlcov && GQLCOV_CAPTURE=1 vitest run && gqlcov report -s schema.graphql --html .gqlcov/report.html --lcov .gqlcov/lcov.info --istanbul .gqlcov/coverage-final.json --untested && gqlcov gate .gqlcov/report.json --min-fields 60"
+  },
+  "dependencies": {
+    "@gqlcov/capture-envelop": "0.1.0",
+    "@gqlcov/cli": "0.1.0",
+    "@gqlcov/core": "0.1.0",
+    "graphql": "^16.9.0",
+    "graphql-yoga": "^5.10.4"
+  }
+}
