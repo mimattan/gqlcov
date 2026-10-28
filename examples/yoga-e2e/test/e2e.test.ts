@@ -44,7 +44,7 @@ describe("club app E2E", () => {
     });
     expect(create.errors).toBeUndefined();
     const id = (create.data as { createMatch: { id: string } }).createMatch.id;
-    const read = await gql("read match", `query Match($id: ID!) { match(id: $id) { id players { name } note } }`, { id });
+    const read = await gql("read match", `query Match($id: ID!) { match(id: $id) { id status players { name } note } }`, { id });
     expect(read.errors).toBeUndefined();
   });
 
@@ -76,6 +76,12 @@ describe("coverage of this run", () => {
     expect(report.enums.Surface.values.GRASS.hits).toBe(0);
     expect(report.enums.Gender.values.F.hits).toBe(1);
     expect(mi.playerIds.values.listMany).toBe(2);
+    // output-only enum: scored on what responses contained, outside the enum-values number
+    expect(report.enums.MatchStatus).toMatchObject({ input: false, output: true });
+    expect(report.enums.MatchStatus.values.PLAYED.observed).toBe(1);
+    expect(report.enums.MatchStatus.values.SCHEDULED.observed).toBe(0);
+    expect(report.enums.Surface.values.CLAY.observed).toBe(1);
+    expect(report.summary.enumValues.total).toBe(7); // Surface and Gender only
     // the capture source label came through from the test header
     const sources = new Set(readCaptures(captureDir).map((c) => c.source));
     expect(sources.has("create match")).toBe(true);

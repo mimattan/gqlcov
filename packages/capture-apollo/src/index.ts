@@ -1,5 +1,5 @@
 import type { ApolloServerPlugin } from "@apollo/server";
-import { DEFAULT_CAPTURE_DIR, writeCapture } from "@gqlcov/core";
+import { collectResponseEnums, DEFAULT_CAPTURE_DIR, writeCapture, type CapturedOperation } from "@gqlcov/core";
 import { print } from "graphql";
 
 export interface CaptureOptions {
@@ -14,7 +14,10 @@ function isEnabled(opt: CaptureOptions["enabled"]): boolean {
   return Boolean(process.env.GQLCOV_CAPTURE) || process.env.NODE_ENV === "test";
 }
 
-/** Apollo Server 4 plugin: captures every operation that resolved (parsed and validated) into the capture folder. */
+/**
+ * Apollo Server 4/5 plugin: captures every operation that resolved (parsed and validated) into the capture folder,
+ * with the enum values its response contained.
+ */
 export function gqlcovCapturePlugin<TContext extends Record<string, unknown> = Record<string, unknown>>(
   options: CaptureOptions = {},
 ): ApolloServerPlugin<TContext> {
@@ -22,15 +25,28 @@ export function gqlcovCapturePlugin<TContext extends Record<string, unknown> = R
   return {
     async requestDidStart() {
       if (!isEnabled(options.enabled)) return {};
+      let op: CapturedOperation | undefined;
       return {
         async didResolveOperation(ctx) {
+          op = {
+            document: print(ctx.document),
+            operationName: ctx.operationName ?? null,
+            variables: (ctx.request.variables as Record<string, unknown> | undefined) ?? null,
+            source: options.source?.(ctx.contextValue),
+          };
+        },
+        async willSendResponse(ctx) {
+          if (!op || !ctx.document) return;
           try {
-            writeCapture(dir, {
-              document: print(ctx.document),
-              operationName: ctx.operationName ?? null,
-              variables: (ctx.request.variables as Record<string, unknown> | undefined) ?? null,
-              source: options.source?.(ctx.contextValue),
-            });
+            // For incremental (deferred) responses only the initial payload is walked.
+            const body = ctx.response.body;
+            const data = body.kind === "single" ? body.singleResult.data : body.initialResult.data;
+            if (data) op.responseEnums = collectResponseEnums(ctx.schema, ctx.document, data, ctx.operationName);
+          } catch {
+            // response walking is best effort
+          }
+          try {
+            writeCapture(dir, op);
           } catch {
             // never break the request because of coverage capture
           }

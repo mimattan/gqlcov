@@ -8,6 +8,8 @@ export interface CapturedOperation {
   timestamp?: string;
   /** Free-form origin, e.g. the test file name when the capture layer knows it. */
   source?: string;
+  /** Enum values that appeared in the response data, by enum name. Server-side capture fills this; wire capture does not. */
+  responseEnums?: Record<string, string[]>;
 }
 
 export interface RunInfo {
@@ -76,8 +78,20 @@ export interface InputTypeCoverage {
   fields: Record<string, InputFieldCoverage>;
 }
 
+export interface EnumValueCoverage {
+  /** Times the value was sent as input (argument or input field). */
+  hits: number;
+  /** Operations whose response contained the value. */
+  observed: number;
+  deprecated: boolean;
+}
+
 export interface EnumCoverage {
-  values: Record<string, { hits: number; deprecated: boolean }>;
+  /** Reachable as input through an included argument or input field; only these count toward `enumValues`. */
+  input: boolean;
+  /** Returned by an included output field; only these count toward `enumValuesObserved`. */
+  output: boolean;
+  values: Record<string, EnumValueCoverage>;
 }
 
 export interface Ratio {
@@ -94,8 +108,14 @@ export interface CoverageSummary {
   inputFields: Ratio;
   /** Input fields seen both sent and omitted (optional fields only). */
   inputFieldsBothStates: Ratio;
+  /** Values of input-reachable enums sent at least once. */
   enumValues: Ratio;
+  /** Values of output enums seen in at least one response. Reported, never gated. */
+  enumValuesObserved: Ratio;
 }
+
+/** Summary keys that are informational only: excluded from the no-decrease gate. */
+export const UNGATED_SUMMARY_KEYS: readonly (keyof CoverageSummary)[] = ["enumValuesObserved"];
 
 export interface OperationStats {
   total: number;

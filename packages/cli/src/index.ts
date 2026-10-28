@@ -14,14 +14,16 @@ const writeOut = (p: string, content: string) => {
 
 function printSummary(r: CoverageReport): void {
   const s = r.summary;
-  const line = (label: string, x: { percent: number; covered: number; total: number }) => `  ${label.padEnd(34)} ${String(x.percent).padStart(6)}%  (${x.covered}/${x.total})`;
+  const line = (label: string, x: { percent: number; covered: number; total: number }) => `  ${label.padEnd(38)} ${String(x.percent).padStart(6)}%  (${x.covered}/${x.total})`;
   console.log(`gqlcov: ${r.operations.total} operations (${r.operations.query} queries, ${r.operations.mutation} mutations, ${r.operations.subscription} subscriptions${r.operations.invalid ? `, ${r.operations.invalid} invalid` : ""}), schema ${r.schemaHash}`);
   console.log(line("Types", s.types));
   console.log(line("Output fields", s.fields));
   console.log(line("Arguments", s.arguments));
   console.log(line("Input-type fields sent", s.inputFields));
   console.log(line("Optional inputs sent and omitted", s.inputFieldsBothStates));
-  console.log(line("Enum values", s.enumValues));
+  console.log(line("Enum values sent", s.enumValues));
+  // Older reports have no observed number.
+  if (s.enumValuesObserved) console.log(line("Enum values in responses (not gated)", s.enumValuesObserved));
 }
 
 function parseHeaders(list: string[] = []): Record<string, string> {
@@ -117,7 +119,7 @@ export function buildCli(): Command {
     .argument("<report>", "report JSON")
     .option("--min-fields <pct>", "minimum output-field coverage", parseFloat)
     .option("--min-input-fields <pct>", "minimum input-field coverage", parseFloat)
-    .option("--min-enum-values <pct>", "minimum enum-value coverage", parseFloat)
+    .option("--min-enum-values <pct>", "minimum coverage of enum values sent as input", parseFloat)
     .option("--base <report>", "fail on any decrease versus this report")
     .option("--tolerance <points>", "allowed decrease in percentage points", parseFloat, 0)
     .action((reportPath: string, o) => {

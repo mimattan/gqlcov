@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc -b",
-    "e2e": "rm -rf .gqlcov && GQLCOV_CAPTURE=1 vitest run && gqlcov report -s schema.graphql --html .gqlcov/report.html --lcov .gqlcov/lcov.info --istanbul .gqlcov/coverage-final.json --untested && gqlcov gate .gqlcov/report.json --min-fields 60"
+    "e2e": "rm -rf .gqlcov && GQLCOV_CAPTURE=1 vitest run && node ../../packages/cli/dist/bin.js report -s schema.graphql --html .gqlcov/report.html --lcov .gqlcov/lcov.info --istanbul .gqlcov/coverage-final.json --untested && node ../../packages/cli/dist/bin.js gate .gqlcov/report.json --min-fields 60"
   },
   "dependencies": {
     "@gqlcov/capture-envelop": "0.1.0",

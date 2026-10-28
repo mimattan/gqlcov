@@ -45,12 +45,19 @@ function inputRow(report: CoverageReport, tn: string): Row {
   return { name: tn, covered, total: fields.length, body: `<ul class="fields">${lines}</ul>`, kind: "input", uncovered: covered < fields.length };
 }
 
+/** Input-reachable enums are scored on values sent; output-only enums on values seen in responses. */
 function enumRow(report: CoverageReport, en: string): Row {
   const e = report.enums[en];
+  const input = e.input ?? true;
   const values = Object.entries(e.values);
-  const covered = values.filter(([, v]) => v.hits > 0).length;
-  const lines = values.map(([vn, v]) => `<li class="${v.hits > 0 ? "on" : "off"}" data-n="${esc(vn.toLowerCase())}"><span class="fname">${esc(vn)}</span><span class="hits">${v.hits > 0 ? `${v.hits}×` : "never"}</span></li>`).join("");
-  return { name: en, covered, total: values.length, body: `<ul class="fields">${lines}</ul>`, kind: "enum", uncovered: covered < values.length };
+  const isOn = (v: { hits: number; observed?: number }) => (input ? v.hits > 0 : (v.observed ?? 0) > 0);
+  const covered = values.filter(([, v]) => isOn(v)).length;
+  const detail = (v: { hits: number; observed?: number }) => {
+    const parts = [input ? (v.hits > 0 ? `sent ${v.hits}` : "never sent") : "", e.output ? (v.observed ? `in ${v.observed} responses` : "not seen in responses") : ""];
+    return parts.filter(Boolean).join(", ");
+  };
+  const lines = values.map(([vn, v]) => `<li class="${isOn(v) ? "on" : "off"}" data-n="${esc(vn.toLowerCase())}"><span class="fname">${esc(vn)}</span><span class="hits">${detail(v)}</span></li>`).join("");
+  return { name: en, covered, total: values.length, body: `<ul class="fields">${lines}</ul>`, kind: input ? "enum" : "out enum", uncovered: covered < values.length };
 }
 
 function renderRow(r: Row, open = false): string {
@@ -172,7 +179,8 @@ ${ledger("Output fields", s.fields, "requested at least once")}
 ${ledger("Arguments", s.arguments, "passed at least once")}
 ${ledger("Input fields", s.inputFields, "sent at least once")}
 ${ledger("Optional input fields, both states", s.inputFieldsBothStates, "seen sent and seen omitted")}
-${ledger("Enum values", s.enumValues, "sent as input at least once")}
+${ledger("Enum values", s.enumValues, "sent as input at least once; enums a client can send")}
+${s.enumValuesObserved ? ledger("Enum values in responses", s.enumValuesObserved, "returned at least once; informational, never gated") : ""}
 ${ledger("Types", s.types, "touched by any operation")}
 </div>
 
@@ -182,7 +190,7 @@ ${rootSections(report, schema)}
 
 <section><h2>All types <span class="h2-note">${Object.keys(report.types).length - [...rootNames].filter((n) => report.types[n]).length}</span></h2>${typeRows}</section>
 <section><h2>Input types <span class="h2-note">${Object.keys(report.inputTypes).length}</span></h2><p class="legend">Green: sent, and omitted too where optional. Amber: sent but never omitted. Plain: never sent. ! marks required fields.</p>${inputRows}</section>
-<section><h2>Enums <span class="h2-note">${Object.keys(report.enums).length}</span></h2>${enumRows}</section>
+<section><h2>Enums <span class="h2-note">${Object.keys(report.enums).length}</span></h2><p class="legend">Enums a client can send are scored on values sent. Output-only enums ("out enum") are scored on values seen in responses and do not count toward the enum-values number.</p>${enumRows}</section>
 <section><h2>Operations <span class="h2-note">${named.length}</span></h2>${named.length ? `<ul class="fields" style="border:1px solid var(--line);border-radius:8px;background:var(--panel)">${named.map(([n, c]) => `<li class="on"><span class="fname">${esc(n)}</span><span class="hits">${c}×</span></li>`).join("")}</ul>` : `<p class="empty">No operations in this run.</p>`}</section>
 </main>
 <script>
