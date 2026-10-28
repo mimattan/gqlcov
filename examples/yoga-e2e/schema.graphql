@@ -1,5 +1,6 @@
 enum Surface { CLAY HARD GRASS INDOOR }
 enum Gender { M F X }
+enum MatchStatus { SCHEDULED PLAYED }
 
 input ScoreInput { games: Int!, tiebreak: Int }
 input PlayerFilter { clubId: ID, gender: Gender, minRating: Float, nameContains: String }
@@ -7,7 +8,7 @@ input MatchInput { surface: Surface!, playerIds: [ID!]!, sets: [ScoreInput!], no
 
 type Club { id: ID!, name: String!, courts: Int }
 type Player { id: ID!, name: String!, gender: Gender, rating: Float, club: Club }
-type Match { id: ID!, surface: Surface!, players: [Player!]!, sets: [Set!]!, note: String }
+type Match { id: ID!, surface: Surface!, status: MatchStatus!, players: [Player!]!, sets: [Set!]!, note: String }
 type Set { games: Int!, tiebreak: Int }
 
 type Query {

@@ -68,6 +68,7 @@ function elements(report: CoverageReport, lines: SchemaLineMap): { els: Element[
     }
   }
   for (const [en, e] of Object.entries(report.enums)) {
+    if (e.input === false) continue; // output-only enum values are not input targets; they would show as permanent misses
     for (const [vn, v] of Object.entries(e.values)) {
       const path = `${en}.${vn}`;
       const line = lines.get(path);
@@ -82,7 +83,7 @@ function elements(report: CoverageReport, lines: SchemaLineMap): { els: Element[
 
 /**
  * LCOV for Codecov, Coveralls, SonarQube (via lcov import) and `genhtml`.
- * Lines = output fields, input fields, enum values. Functions = root operation fields. Branches = arguments and optional-input sent/omitted.
+ * Lines = output fields, input fields, values of input-reachable enums. Functions = root operation fields. Branches = arguments and optional-input sent/omitted.
  */
 export function toLcov(report: CoverageReport, sdl: string | DocumentNode, schemaPath: string): string {
   const { els, branches } = elements(report, schemaLineMap(sdl));

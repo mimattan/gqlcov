@@ -85,15 +85,16 @@ export function emptyReport(schemaInput: string | object | GraphQLSchema, option
       }
       inputTypes[type.name] = ic;
     } else if (isEnumType(type)) {
-      const ec: EnumCoverage = { values: {} };
+      const ec: EnumCoverage = { input: false, output: false, values: {} };
       for (const v of type.getValues()) {
         const vdep = v.deprecationReason != null;
         if (ex.isExcluded(`${type.name}.${v.name}`, vdep)) continue;
-        ec.values[v.name] = { hits: 0, deprecated: vdep };
+        ec.values[v.name] = { hits: 0, observed: 0, deprecated: vdep };
       }
       enums[type.name] = ec;
     }
   }
+  markEnumReachability(schema, types, inputTypes, enums);
 
   const report: CoverageReport = {
     version: 1,
@@ -110,8 +111,51 @@ export function emptyReport(schemaInput: string | object | GraphQLSchema, option
   return report;
 }
 
+/**
+ * Flag each enum as reachable as input (from an included argument, directly or through included input fields)
+ * and as output (the type of an included output field). Output-only enums can never be covered by sending,
+ * so they are left out of `enumValues` and reported under `enumValuesObserved` instead.
+ */
+function markEnumReachability(
+  schema: GraphQLSchema,
+  types: Record<string, TypeCoverage>,
+  inputTypes: Record<string, InputTypeCoverage>,
+  enums: Record<string, EnumCoverage>,
+): void {
+  const queue: string[] = [];
+  const seen = new Set<string>();
+  const reach = (name: string) => {
+    if (seen.has(name)) return;
+    seen.add(name);
+    queue.push(name);
+  };
+  for (const [tn, tc] of Object.entries(types)) {
+    const type = schema.getType(tn);
+    if (!isObjectType(type) && !isInterfaceType(type)) continue;
+    const defs = type.getFields();
+    for (const [fn, fc] of Object.entries(tc.fields)) {
+      const def = defs[fn];
+      if (!def) continue;
+      const out = enums[getNamedType(def.type).name];
+      if (out) out.output = true;
+      for (const arg of def.args) if (fc.args[arg.name]) reach(getNamedType(arg.type).name);
+    }
+  }
+  while (queue.length) {
+    const name = queue.pop()!;
+    if (enums[name]) {
+      enums[name].input = true;
+      continue;
+    }
+    const type = schema.getType(name);
+    const ic = inputTypes[name];
+    if (!ic || !isInputObjectType(type)) continue;
+    for (const field of Object.values(type.getFields())) if (ic.fields[field.name]) reach(getNamedType(field.type).name);
+  }
+}
+
 export function summarise(r: Pick<CoverageReport, "types" | "inputTypes" | "enums">): CoverageSummary {
-  let tC = 0, tT = 0, fC = 0, fT = 0, aC = 0, aT = 0, iC = 0, iT = 0, bC = 0, bT = 0, eC = 0, eT = 0;
+  let tC = 0, tT = 0, fC = 0, fT = 0, aC = 0, aT = 0, iC = 0, iT = 0, bC = 0, bT = 0, eC = 0, eT = 0, oC = 0, oT = 0;
   for (const t of Object.values(r.types)) {
     tT++;
     if (t.hits > 0) tC++;
@@ -135,9 +179,17 @@ export function summarise(r: Pick<CoverageReport, "types" | "inputTypes" | "enum
     }
   }
   for (const e of Object.values(r.enums)) {
+    // Reports written before the input/output split carry neither flag: count them as input, as they were.
+    const input = e.input ?? true;
     for (const v of Object.values(e.values)) {
-      eT++;
-      if (v.hits > 0) eC++;
+      if (input) {
+        eT++;
+        if (v.hits > 0) eC++;
+      }
+      if (e.output) {
+        oT++;
+        if ((v.observed ?? 0) > 0) oC++;
+      }
     }
   }
   return {
@@ -147,6 +199,7 @@ export function summarise(r: Pick<CoverageReport, "types" | "inputTypes" | "enum
     inputFields: ratio(iC, iT),
     inputFieldsBothStates: ratio(bC, bT),
     enumValues: ratio(eC, eT),
+    enumValuesObserved: ratio(oC, oT),
   };
 }
 
@@ -264,6 +317,11 @@ export function recordOperation(report: CoverageReport, schema: GraphQLSchema, o
       },
     }),
   );
+  for (const [en, values] of Object.entries(op.responseEnums ?? {})) {
+    const ec = report.enums[en];
+    if (!ec) continue;
+    for (const v of new Set(values)) if (ec.values[v]) ec.values[v].observed++;
+  }
   return { valid: true, errors: [] };
 }
 

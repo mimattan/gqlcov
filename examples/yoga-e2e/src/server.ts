@@ -43,7 +43,10 @@ export function createApp(captureDir?: string) {
           },
         },
         Player: { club: (p: { clubId: string }) => clubs.find((c) => c.id === p.clubId) ?? null },
-        Match: { players: (m: { playerIds: string[] }) => m.playerIds.map((id) => players.find((p) => p.id === id)) },
+        Match: {
+          status: (m: { sets: unknown[] }) => (m.sets.length ? "PLAYED" : "SCHEDULED"),
+          players: (m: { playerIds: string[] }) => m.playerIds.map((id) => players.find((p) => p.id === id)),
+        },
       },
     }),
     plugins: [useGqlcovCapture({ dir: captureDir, enabled: true, source: (ctx) => (ctx.request as Request | undefined)?.headers.get("x-test-name") ?? undefined })],

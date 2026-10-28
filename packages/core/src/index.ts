@@ -6,4 +6,5 @@ export { writeCapture, readCaptures, DEFAULT_CAPTURE_DIR } from "./capture.js";
 export { toSchema, schemaHash } from "./schema.js";
 export { classifyValue, emptyValueClasses, addValueClasses } from "./values.js";
 export { Excluder } from "./exclude.js";
+export { collectResponseEnums } from "./response.js";
 export { toLcov, toIstanbul, schemaLineMap } from "./export.js";

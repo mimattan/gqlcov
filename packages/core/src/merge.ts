@@ -42,7 +42,12 @@ export function mergeReports(reports: CoverageReport[]): CoverageReport {
     for (const [en, e] of Object.entries(r.enums)) {
       const oe = out.enums[en];
       if (!oe) continue;
-      for (const [vn, v] of Object.entries(e.values)) if (oe.values[vn]) oe.values[vn].hits += v.hits;
+      for (const [vn, v] of Object.entries(e.values)) {
+        const ov = oe.values[vn];
+        if (!ov) continue;
+        ov.hits += v.hits;
+        ov.observed = (ov.observed ?? 0) + (v.observed ?? 0);
+      }
     }
     for (const [k, v] of Object.entries(r.argumentValues)) if (out.argumentValues[k]) out.argumentValues[k] = addValueClasses(out.argumentValues[k], v);
   }

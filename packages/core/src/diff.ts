@@ -1,4 +1,4 @@
-import type { CoverageDiff, CoverageReport, CoverageSummary, GateOptions, GateResult } from "./types.js";
+import { UNGATED_SUMMARY_KEYS, type CoverageDiff, type CoverageReport, type CoverageSummary, type GateOptions, type GateResult } from "./types.js";
 
 /** Flatten every coverable element to "path -> covered?" */
 export function coveredPaths(r: CoverageReport): Map<string, boolean> {
@@ -28,7 +28,8 @@ export function diffReports(base: CoverageReport, head: CoverageReport): Coverag
     else if (!covered && b.get(p)) lostCoverage.push(p);
   }
   for (const p of b.keys()) if (!h.has(p)) schemaRemoved.push(p);
-  const keys = Object.keys(head.summary) as (keyof CoverageSummary)[];
+  // Keys missing from either side (a report from an older version) have no delta.
+  const keys = (Object.keys(head.summary) as (keyof CoverageSummary)[]).filter((k) => base.summary[k]);
   const delta = Object.fromEntries(keys.map((k) => [k, Math.round((head.summary[k].percent - base.summary[k].percent) * 100) / 100])) as CoverageDiff["delta"];
   return {
     base: { summary: base.summary, generatedAt: base.generatedAt },
@@ -54,6 +55,7 @@ export function gate(report: CoverageReport, options: GateOptions): GateResult {
     const tol = options.tolerance ?? 0;
     const d = diffReports(options.base, report);
     for (const [k, v] of Object.entries(d.delta)) {
+      if (UNGATED_SUMMARY_KEYS.includes(k as keyof CoverageSummary)) continue;
       if (v < -tol) failures.push(`${k} coverage dropped by ${Math.abs(v)} points (${options.base.summary[k as keyof CoverageSummary].percent}% to ${report.summary[k as keyof CoverageSummary].percent}%)`);
     }
     if (d.lostCoverage.length > 0) failures.push(`lost coverage on: ${d.lostCoverage.slice(0, 20).join(", ")}${d.lostCoverage.length > 20 ? ` and ${d.lostCoverage.length - 20} more` : ""}`);
@@ -70,7 +72,10 @@ export function uncovered(report: CoverageReport): { fields: string[]; arguments
       for (const [an, a] of Object.entries(f.args)) if (a.hits === 0) out.arguments.push(`${tn}.${fn}(${an})`);
     }
   for (const [tn, t] of Object.entries(report.inputTypes)) for (const [fn, f] of Object.entries(t.fields)) if (f.sent === 0) out.inputFields.push(`${tn}.${fn}`);
-  for (const [en, e] of Object.entries(report.enums)) for (const [vn, v] of Object.entries(e.values)) if (v.hits === 0) out.enumValues.push(`${en}.${vn}`);
+  for (const [en, e] of Object.entries(report.enums)) {
+    if (e.input === false) continue; // output-only: nothing a test can send
+    for (const [vn, v] of Object.entries(e.values)) if (v.hits === 0) out.enumValues.push(`${en}.${vn}`);
+  }
   for (const k of Object.keys(out) as (keyof typeof out)[]) out[k].sort();
   return out;
 }
