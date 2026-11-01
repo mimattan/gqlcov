@@ -47,6 +47,8 @@ Full combinatorial coverage of input fields is deliberately **not** a metric her
 
    Server plugins capture only when `GQLCOV_CAPTURE=1` or `NODE_ENV=test` (override with `enabled`). Captures land in `.gqlcov/captures/`, one small JSON file per operation.
 
+   The packages are ESM. A CommonJS server loads them through `require(esm)`, which needs Node 22.12 or later.
+
 2. Run your E2E suite with `GQLCOV_CAPTURE=1`.
 
 3. Report and gate:
