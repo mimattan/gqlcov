@@ -11,7 +11,8 @@
     "build": "tsc -b && chmod +x packages/cli/dist/bin.js",
     "test": "vitest run",
     "lint": "tsc -b --noEmit false",
-    "clean": "rm -rf packages/*/dist examples/*/dist packages/*/tsconfig.tsbuildinfo examples/*/tsconfig.tsbuildinfo"
+    "clean": "rm -rf packages/*/dist examples/*/dist packages/*/tsconfig.tsbuildinfo examples/*/tsconfig.tsbuildinfo",
+    "set-version": "node scripts/set-version.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

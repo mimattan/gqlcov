@@ -6,6 +6,7 @@ import { lexicographicSortSchema, printSchema } from "graphql";
 import { renderHtml } from "./html.js";
 import { loadSchemaFrom } from "./schema-source.js";
 
+const { version } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
 const readReport = (p: string): CoverageReport => JSON.parse(readFileSync(p, "utf8")) as CoverageReport;
 const writeOut = (p: string, content: string) => {
   mkdirSync(dirname(p), { recursive: true });
@@ -31,7 +32,7 @@ function parseHeaders(list: string[] = []): Record<string, string> {
 }
 
 export function buildCli(): Command {
-  const program = new Command("gqlcov").description("GraphQL schema coverage from captured E2E operations").version("0.1.0");
+  const program = new Command("gqlcov").description("GraphQL schema coverage from captured E2E operations").version(version);
 
   program
     .command("report")
