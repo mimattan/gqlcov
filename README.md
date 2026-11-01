@@ -177,7 +177,9 @@ All five packages share one version.
 1. `npm run set-version -- 0.2.0 && npm install`
 2. Commit, then tag and push: `git tag v0.2.0 && git push origin main v0.2.0`
 
-The `Release` workflow builds, tests, checks that the tag matches every package version, and publishes `core` first, then the CLI and capture packages, with npm provenance. It needs an `NPM_TOKEN` repository secret: an npm automation token (or granular token with publish rights on the `@gqlcov` scope).
+The `Release` workflow builds, tests, checks that the tag matches every package version, and publishes `core` first, then the CLI and capture packages. It uses npm trusted publishing, so no npm token is stored in GitHub: each package on npmjs.com has a trusted publisher for repository `mimattan/gqlcov`, workflow `release.yml`, and npm adds provenance automatically.
+
+A new package added to `packages/` has no trusted publisher yet. Publish its first version by hand (or with a short-lived token), then add the trusted publisher in its npmjs.com settings.
 
 ## License
 
