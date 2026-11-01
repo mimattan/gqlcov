@@ -170,6 +170,15 @@ cd examples/yoga-e2e && npm run e2e     # capture -> report -> html -> gate agai
 - GitHub Action with PR annotations.
 - Federation: coverage per subgraph.
 
+## Releasing
+
+All five packages share one version.
+
+1. `npm run set-version -- 0.2.0 && npm install`
+2. Commit, then tag and push: `git tag v0.2.0 && git push origin main v0.2.0`
+
+The `Release` workflow builds, tests, checks that the tag matches every package version, and publishes `core` first, then the CLI and capture packages, with npm provenance. It needs an `NPM_TOKEN` repository secret: an npm automation token (or granular token with publish rights on the `@gqlcov` scope).
+
 ## License
 
 MIT

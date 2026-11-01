@@ -3,13 +3,55 @@
   "version": "0.1.0",
   "description": "Envelop / GraphQL Yoga plugin that writes every executed operation to a capture folder for gqlcov.",
   "license": "MIT",
+  "author": "Michael Mattan",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mimattan/gqlcov.git",
+    "directory": "packages/capture-envelop"
+  },
+  "homepage": "https://github.com/mimattan/gqlcov#readme",
+  "bugs": {
+    "url": "https://github.com/mimattan/gqlcov/issues"
+  },
+  "keywords": [
+    "graphql",
+    "coverage",
+    "envelop",
+    "yoga",
+    "plugin"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
-  "files": ["dist"],
-  "scripts": { "build": "tsc -b" },
-  "dependencies": { "@gqlcov/core": "0.1.0" },
-  "peerDependencies": { "@envelop/core": ">=4", "graphql": "^16.0.0" },
-  "devDependencies": { "@envelop/core": "^5.0.2", "graphql": "^16.9.0" }
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@gqlcov/core": "0.1.0"
+  },
+  "peerDependencies": {
+    "@envelop/core": ">=4",
+    "graphql": "^16.0.0"
+  },
+  "devDependencies": {
+    "@envelop/core": "^5.0.2",
+    "graphql": "^16.9.0"
+  }
 }

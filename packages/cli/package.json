@@ -3,6 +3,29 @@
   "version": "0.1.0",
   "description": "gqlcov command line: report, diff, gate and merge GraphQL schema coverage from captured operations.",
   "license": "MIT",
+  "author": "Michael Mattan",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mimattan/gqlcov.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/mimattan/gqlcov#readme",
+  "bugs": {
+    "url": "https://github.com/mimattan/gqlcov/issues"
+  },
+  "keywords": [
+    "graphql",
+    "coverage",
+    "cli",
+    "testing",
+    "ci"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "bin": {
     "gqlcov": "./dist/bin.js"
@@ -10,7 +33,9 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsc -b && chmod +x dist/bin.js"
@@ -19,5 +44,11 @@
     "@gqlcov/core": "0.1.0",
     "commander": "^12.1.0",
     "graphql": "^16.9.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
   }
 }

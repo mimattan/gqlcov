@@ -3,13 +3,50 @@
   "version": "0.1.0",
   "description": "GraphQL schema coverage from captured operations: output fields, arguments, input-type fields, enum values and value classes.",
   "license": "MIT",
+  "author": "Michael Mattan",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mimattan/gqlcov.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://github.com/mimattan/gqlcov#readme",
+  "bugs": {
+    "url": "https://github.com/mimattan/gqlcov/issues"
+  },
+  "keywords": [
+    "graphql",
+    "coverage",
+    "testing",
+    "e2e",
+    "schema"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
-  "files": ["dist"],
-  "scripts": { "build": "tsc -b" },
-  "peerDependencies": { "graphql": "^16.0.0" },
-  "devDependencies": { "graphql": "^16.9.0" },
-  "keywords": ["graphql", "coverage", "testing", "e2e", "schema"]
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "peerDependencies": {
+    "graphql": "^16.0.0"
+  },
+  "devDependencies": {
+    "graphql": "^16.9.0"
+  }
 }
