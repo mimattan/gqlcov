@@ -25,6 +25,7 @@ import {
 import { Excluder } from "./exclude.js";
 import { schemaHash, toSchema } from "./schema.js";
 import { attributeSubgraphs, subgraphsFromSdls, subgraphsFromSupergraph } from "./subgraphs.js";
+import { applyUsage } from "./usage.js";
 import type {
   CapturedOperation,
   CoverageOptions,
@@ -35,6 +36,7 @@ import type {
   Ratio,
   RunInfo,
   TypeCoverage,
+  UsageData,
   ValueClasses,
 } from "./types.js";
 import { classifyValue, emptyValueClasses } from "./values.js";
@@ -340,6 +342,8 @@ export interface ComputeOptions extends CoverageOptions {
    * its `@join__` directives are read automatically.
    */
   subgraphSdls?: Record<string, string>;
+  /** Production field usage to join with the result. */
+  usage?: UsageData;
 }
 
 /** Compute a full report from a schema and a list of captured operations. */
@@ -349,12 +353,13 @@ export function computeCoverage(
   options: ComputeOptions = {},
 ): CoverageReport {
   const schema = toSchema(schemaInput);
-  const { run, subgraphSdls, ...covOptions } = options;
+  const { run, subgraphSdls, usage, ...covOptions } = options;
   const report = emptyReport(schema, covOptions);
   if (run) report.run = run;
   for (const op of operations) recordOperation(report, schema, op);
   report.summary = summarise(report);
   const membership = subgraphSdls && Object.keys(subgraphSdls).length ? subgraphsFromSdls(subgraphSdls) : subgraphsFromSupergraph(schema);
   if (membership) attributeSubgraphs(report, membership);
+  if (usage) applyUsage(report, usage);
   return report;
 }

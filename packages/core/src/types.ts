@@ -39,6 +39,8 @@ export interface FieldCoverage {
   args: Record<string, ArgCoverage>;
   /** Subgraphs that resolve this field; set by `attributeSubgraphs`. */
   graphs?: string[];
+  /** Production requests that selected this field in the usage window; set by `applyUsage`. */
+  requests?: number;
 }
 
 export interface TypeCoverage {
@@ -151,6 +153,34 @@ export interface CoverageReport {
   argumentValues: Record<string, ValueClasses>;
   /** One summary per subgraph, present when the schema was a supergraph or subgraph SDLs were given. */
   subgraphs?: Record<string, CoverageSummary>;
+  /** Join with production field usage, present when usage data was given. */
+  usage?: UsageJoin;
+}
+
+/** Production field usage, as `gqlcov usage apollo|cosmo` write it or hand-made: requests per "Type.field". */
+export interface UsageData {
+  /** Where the numbers came from, e.g. "apollo my-graph@current". */
+  source?: string;
+  /** ISO timestamps of the window. */
+  from?: string;
+  to?: string;
+  fields: Record<string, number>;
+}
+
+export interface UsageJoin {
+  source?: string;
+  from?: string;
+  to?: string;
+  /** Output fields with production traffic: how many of them a test requested. */
+  usedFields: Ratio;
+  /** Used in production, never tested: the risk list, most requested first. */
+  untestedUsed: { path: string; requests: number }[];
+  /** Tested but no production traffic in the window. */
+  testedUnused: string[];
+  /** Neither: deprecation candidates. */
+  unusedUntested: string[];
+  /** Usage paths that are not in the (included) schema: removed fields still being called, or excluded ones. */
+  unknown: string[];
 }
 
 export interface CoverageDiff {
@@ -177,6 +207,8 @@ export interface GateOptions {
   tolerance?: number;
   /** Apply the thresholds and the no-decrease check to these subgraphs instead of the whole schema. "*" means every subgraph in the report. */
   subgraphs?: string[];
+  /** Minimum percent of fields with production traffic that are tested. Needs usage data in the report. */
+  minUsedFields?: number;
 }
 
 export interface GateResult {

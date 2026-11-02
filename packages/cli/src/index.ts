@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { computeCoverage, diffReports, gate, mergeReports, readCaptures, uncovered, toIstanbul, toLcov, DEFAULT_CAPTURE_DIR, type CoverageReport } from "@gqlcov/core";
+import { computeCoverage, diffReports, gate, mergeReports, parseUsage, readCaptures, uncovered, toIstanbul, toLcov, DEFAULT_CAPTURE_DIR, type CoverageReport } from "@gqlcov/core";
 import { lexicographicSortSchema, printSchema } from "graphql";
 import { renderHtml } from "./html.js";
 import { loadSchemaFrom } from "./schema-source.js";
@@ -25,7 +25,23 @@ function printSummary(r: CoverageReport): void {
   console.log(line("Enum values sent", s.enumValues));
   // Older reports have no observed number.
   if (s.enumValuesObserved) console.log(line("Enum values in responses (not gated)", s.enumValuesObserved));
+  if (r.usage) console.log(line("Production fields tested", r.usage.usedFields));
   printSubgraphs(r);
+}
+
+const fmtRequests = (n: number) => (n >= 1e6 ? `${Math.round(n / 1e5) / 10}M` : n >= 1e4 ? `${Math.round(n / 1e3)}k` : String(n));
+
+function printUsage(r: CoverageReport): void {
+  const u = r.usage;
+  if (!u) return;
+  const where = [u.source, u.from && u.to ? `${u.from.slice(0, 10)} to ${u.to.slice(0, 10)}` : undefined].filter(Boolean).join(", ");
+  console.log(`\n  production usage${where ? ` (${where})` : ""}: ${u.usedFields.total} fields with traffic, ${u.usedFields.covered} tested, ${u.testedUnused.length} tested without traffic, ${u.unusedUntested.length} neither`);
+  if (u.untestedUsed.length) {
+    console.log(`  used in production, never tested (${u.untestedUsed.length}):`);
+    for (const x of u.untestedUsed.slice(0, 25)) console.log(`    ${x.path.padEnd(44)} ${fmtRequests(x.requests).padStart(8)} requests`);
+    if (u.untestedUsed.length > 25) console.log(`    ... and ${u.untestedUsed.length - 25} more`);
+  }
+  if (u.unknown.length) console.log(`  in usage but not in the schema (${u.unknown.length}): ${u.unknown.slice(0, 10).join(", ")}${u.unknown.length > 10 ? ", ..." : ""}`);
 }
 
 function printSubgraphs(r: CoverageReport): void {
@@ -71,6 +87,7 @@ export function buildCli(): Command {
     .option("-H, --header <header...>", "header for endpoint introspection, e.g. 'Authorization: Bearer x'")
     .option("--exclude <pattern...>", "exclude patterns: Type, Type.field, Type.field(arg), Input.field; * wildcard")
     .option("--subgraph <name=file...>", "attribute elements to subgraphs from one SDL per subgraph (a composed supergraph needs no option: its @join__ directives are read)")
+    .option("--usage <file>", "production field usage JSON (from gqlcov usage apollo|cosmo) to list used-but-untested fields")
     .option("--include-deprecated", "count deprecated elements in totals")
     .option("--sha <sha>", "commit SHA for the run", process.env.GITHUB_SHA)
     .option("--branch <name>", "branch for the run", process.env.GITHUB_REF_NAME)
@@ -84,6 +101,7 @@ export function buildCli(): Command {
         excludeDeprecated: !o.includeDeprecated,
         run: { sha: o.sha, branch: o.branch, finishedAt: new Date().toISOString() },
         subgraphSdls: readSubgraphSdls(o.subgraph),
+        usage: o.usage ? parseUsage(readFileSync(o.usage, "utf8")) : undefined,
       });
       writeOut(o.out, JSON.stringify(report, null, 2));
       if (o.html) writeOut(o.html, renderHtml(report, schema));
@@ -103,6 +121,7 @@ export function buildCli(): Command {
       }
       if (!o.quiet) {
         printSummary(report);
+        printUsage(report);
         if (ops.length === 0) console.log(`  (no captures found in ${o.captures.join(", ")})`);
         console.log(`  report: ${o.out}${o.html ? `, html: ${o.html}` : ""}${o.lcov ? `, lcov: ${o.lcov}` : ""}${o.istanbul ? `, istanbul: ${o.istanbul}` : ""}`);
         if (o.untested) {
@@ -154,6 +173,7 @@ export function buildCli(): Command {
     .option("--base <report>", "fail on any decrease versus this report")
     .option("--tolerance <points>", "allowed decrease in percentage points", parseFloat, 0)
     .option("--subgraph <name...>", "apply the thresholds to these subgraphs instead of the whole schema; * for every subgraph")
+    .option("--min-used-fields <pct>", "minimum share of fields with production traffic that are tested (report needs --usage)", parseFloat)
     .action((reportPath: string, o) => {
       const report = readReport(reportPath);
       const result = gate(report, {
@@ -163,6 +183,7 @@ export function buildCli(): Command {
         base: o.base ? readReport(o.base) : undefined,
         tolerance: o.tolerance,
         subgraphs: o.subgraph,
+        minUsedFields: o.minUsedFields,
       });
       printSummary(report);
       if (result.passed) return console.log("  gate: passed");

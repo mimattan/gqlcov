@@ -1,5 +1,6 @@
 import { summarise } from "./coverage.js";
 import { summariseSubgraphs } from "./subgraphs.js";
+import { summariseUsage } from "./usage.js";
 import type { CoverageReport } from "./types.js";
 import { addValueClasses } from "./values.js";
 
@@ -54,5 +55,6 @@ export function mergeReports(reports: CoverageReport[]): CoverageReport {
   }
   out.summary = summarise(out);
   if (out.subgraphs) out.subgraphs = summariseSubgraphs(out);
+  if (out.usage) out.usage = { ...out.usage, ...summariseUsage(out) };
   return out;
 }

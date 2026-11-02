@@ -79,6 +79,12 @@ export function gate(report: CoverageReport, options: GateOptions): GateResult {
       }
     }
   }
+  if (options.minUsedFields !== undefined) {
+    const u = report.usage;
+    if (!u) failures.push(`--min-used-fields needs production usage in the report (gqlcov report --usage)`);
+    else if (u.usedFields.percent < options.minUsedFields)
+      failures.push(`${u.usedFields.percent}% of fields with production traffic are tested, below the minimum ${options.minUsedFields}% (${u.untestedUsed.length} untested: ${u.untestedUsed.slice(0, 10).map((x) => x.path).join(", ")}${u.untestedUsed.length > 10 ? ", ..." : ""})`);
+  }
   if (d && d.lostCoverage.length > 0) {
     const inScope = options.subgraphs?.length ? d.lostCoverage.filter((p) => pathInSubgraphs(report, p, options.subgraphs!)) : d.lostCoverage;
     if (inScope.length > 0) failures.push(`lost coverage on: ${inScope.slice(0, 20).join(", ")}${inScope.length > 20 ? ` and ${inScope.length - 20} more` : ""}`);
