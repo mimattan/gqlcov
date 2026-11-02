@@ -23,6 +23,7 @@ function printSummary(r: CoverageReport): void {
   console.log(line("Arguments", s.arguments));
   console.log(line("Input-type fields sent", s.inputFields));
   console.log(line("Optional inputs sent and omitted", s.inputFieldsBothStates));
+  if (s.inputFieldsNull) console.log(line("Nullable inputs sent as null", s.inputFieldsNull));
   console.log(line("Enum values sent", s.enumValues));
   // Older reports have no observed number.
   if (s.enumValuesObserved) console.log(line("Enum values in responses (not gated)", s.enumValuesObserved));
@@ -269,6 +270,7 @@ export function buildCli(): Command {
     .argument("<report>", "report JSON")
     .option("--min-fields <pct>", "minimum output-field coverage", parseFloat)
     .option("--min-input-fields <pct>", "minimum input-field coverage", parseFloat)
+    .option("--min-input-null <pct>", "minimum share of nullable input fields sent as an explicit null", parseFloat)
     .option("--min-enum-values <pct>", "minimum coverage of enum values sent as input", parseFloat)
     .option("--base <report>", "fail on any decrease versus this report (a missing file skips this check, for the first run)")
     .option("--tolerance <points>", "allowed decrease in percentage points", parseFloat, 0)
@@ -284,6 +286,7 @@ export function buildCli(): Command {
       const result = gate(report, {
         minFields: o.minFields,
         minInputFields: o.minInputFields,
+        minInputNull: o.minInputNull,
         minEnumValues: o.minEnumValues,
         base: o.base && !baseMissing ? readReport(o.base) : undefined,
         tolerance: o.tolerance,

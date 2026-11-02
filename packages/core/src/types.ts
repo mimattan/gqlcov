@@ -99,6 +99,10 @@ export interface InputFieldCoverage {
   omitted: number;
   deprecated: boolean;
   required: boolean;
+  /** The field's type accepts null (not `!`). Absent in older reports. */
+  nullable?: boolean;
+  /** Times the field was sent as an explicit null. Unlike `values.null`, null items inside a list do not count. Absent in older reports. */
+  nulled?: number;
   values: ValueClasses;
   graphs?: string[];
   /** Tests that sent this field, sorted. */
@@ -150,6 +154,8 @@ export interface CoverageSummary {
   inputFields: Ratio;
   /** Input fields seen both sent and omitted (optional fields only). */
   inputFieldsBothStates: Ratio;
+  /** Nullable input fields seen sent as an explicit null. Absent in older reports. */
+  inputFieldsNull: Ratio;
   /** Values of input-reachable enums sent at least once. */
   enumValues: Ratio;
   /** Values of output enums seen in at least one response. Reported, never gated. */
@@ -280,6 +286,8 @@ export interface GateOptions {
   /** Minimum field coverage percent. */
   minFields?: number;
   minInputFields?: number;
+  /** Minimum percent of nullable input fields seen sent as an explicit null. */
+  minInputNull?: number;
   minEnumValues?: number;
   /** Fail if any summary percent drops versus this report. */
   base?: CoverageReport;

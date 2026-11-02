@@ -60,6 +60,7 @@ export function mergeReports(reports: CoverageReport[]): CoverageReport {
         of.sent += f.sent;
         union(of, f);
         of.omitted += f.omitted;
+        if (of.nulled !== undefined || f.nulled !== undefined) of.nulled = (of.nulled ?? 0) + (f.nulled ?? 0);
         of.values = addValueClasses(of.values, f.values);
       }
     }

@@ -89,6 +89,8 @@ export function emptyReport(schemaInput: string | object | GraphQLSchema, option
           omitted: 0,
           deprecated: fdep,
           required: isNonNullType(field.type) && field.defaultValue === undefined,
+          nullable: !isNonNullType(field.type),
+          nulled: 0,
           values: emptyValueClasses(),
         };
       }
@@ -171,7 +173,7 @@ function markEnumReachability(
 /** Summarise the report, or only the elements tagged with one subgraph when `graph` is given. */
 export function summarise(r: Pick<CoverageReport, "types" | "inputTypes" | "enums">, graph?: string): CoverageSummary {
   const inGraph = (x: { graphs?: string[] }) => graph === undefined || (x.graphs?.includes(graph) ?? false);
-  let tC = 0, tT = 0, fC = 0, fT = 0, aC = 0, aT = 0, iC = 0, iT = 0, bC = 0, bT = 0, eC = 0, eT = 0, oC = 0, oT = 0;
+  let tC = 0, tT = 0, fC = 0, fT = 0, aC = 0, aT = 0, iC = 0, iT = 0, bC = 0, bT = 0, nC = 0, nT = 0, eC = 0, eT = 0, oC = 0, oT = 0;
   for (const t of Object.values(r.types)) {
     if (inGraph(t)) {
       tT++;
@@ -196,6 +198,11 @@ export function summarise(r: Pick<CoverageReport, "types" | "inputTypes" | "enum
         bT++;
         if (f.sent > 0 && f.omitted > 0) bC++;
       }
+      // Older reports have no `nullable` flag and leave this number at 0 of 0.
+      if (f.nullable) {
+        nT++;
+        if (f.nulled! > 0) nC++;
+      }
     }
   }
   for (const e of Object.values(r.enums)) {
@@ -219,6 +226,7 @@ export function summarise(r: Pick<CoverageReport, "types" | "inputTypes" | "enum
     arguments: ratio(aC, aT),
     inputFields: ratio(iC, iT),
     inputFieldsBothStates: ratio(bC, bT),
+    inputFieldsNull: ratio(nC, nT),
     enumValues: ratio(eC, eT),
     enumValuesObserved: ratio(oC, oT),
   };
@@ -269,6 +277,7 @@ export function walkInputValue(report: CoverageReport, type: GraphQLInputType, v
       if (Object.prototype.hasOwnProperty.call(obj, field.name) && obj[field.name] !== undefined) {
         fc.sent++;
         tagTest(fc, test);
+        if (obj[field.name] === null) fc.nulled!++;
         walkInputValue(report, field.type, obj[field.name], fc.values, test);
       } else {
         fc.omitted++;

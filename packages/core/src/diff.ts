@@ -71,6 +71,8 @@ export function gate(report: CoverageReport, options: GateOptions): GateResult {
       failures.push(`${label}field coverage ${s.fields.percent}% is below the minimum ${options.minFields}%`);
     if (options.minInputFields !== undefined && s.inputFields.percent < options.minInputFields)
       failures.push(`${label}input-field coverage ${s.inputFields.percent}% is below the minimum ${options.minInputFields}%`);
+    if (options.minInputNull !== undefined && (s.inputFieldsNull?.percent ?? 0) < options.minInputNull)
+      failures.push(`${label}${s.inputFieldsNull ? `${s.inputFieldsNull.percent}% of nullable input fields were sent as null, below the minimum ${options.minInputNull}%` : "--min-input-null needs a report that tracks null inputs: run gqlcov report again"}`);
     if (options.minEnumValues !== undefined && s.enumValues.percent < options.minEnumValues)
       failures.push(`${label}enum-value coverage ${s.enumValues.percent}% is below the minimum ${options.minEnumValues}%`);
     if (delta && baseSummary) {

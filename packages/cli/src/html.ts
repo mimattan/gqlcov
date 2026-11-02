@@ -52,7 +52,10 @@ function inputRow(report: CoverageReport, tn: string): Row {
   const lines = fields
     .map(([fn, f]) => {
       const state = f.sent === 0 ? "off" : !f.required && f.omitted === 0 ? "half" : "on";
-      const detail = f.sent === 0 ? "never sent" : `sent ${f.sent}${f.required ? "" : `, omitted ${f.omitted}`}${f.values.null ? `, null ${f.values.null}` : ""}`;
+      // Older reports have no `nulled` count: fall back to null values, which also count null list items.
+      const nulls = f.nulled ?? f.values.null;
+      const nullText = f.nullable ? `, null ${nulls}` : nulls ? `, null ${nulls}` : "";
+      const detail = f.sent === 0 ? "never sent" : `sent ${f.sent}${f.required ? "" : `, omitted ${f.omitted}`}${nullText}`;
       return `<li class="${state}" data-n="${esc(fn.toLowerCase())}"${gAttr(f.graphs)}${tAttr(f.tests)}><span class="fname">${esc(fn)}${f.required ? "<span class='req'>!</span>" : ""}</span><span class="hits">${byTests(f.tests)}${prodBadge(f.requests, f.sent > 0)}${detail}</span></li>`;
     })
     .join("");
@@ -255,6 +258,7 @@ ${ledger("Output fields", s.fields, "requested at least once")}
 ${ledger("Arguments", s.arguments, "passed at least once")}
 ${ledger("Input fields", s.inputFields, "sent at least once")}
 ${ledger("Optional input fields, both states", s.inputFieldsBothStates, "seen sent and seen omitted")}
+${s.inputFieldsNull ? ledger("Nullable input fields sent as null", s.inputFieldsNull, "seen sent as an explicit null, which clears a value in a partial update") : ""}
 ${ledger("Enum values", s.enumValues, "sent as input at least once; enums a client can send")}
 ${s.enumValuesObserved ? ledger("Enum values in responses", s.enumValuesObserved, "returned at least once; informational, never gated") : ""}
 ${s.fieldsReturned ? ledger("Fields that returned a value", s.fieldsReturned, "requested fields that came back non-null and non-empty at least once; informational") : ""}
@@ -272,7 +276,7 @@ ${subgraphTable(report)}
 ${rootSections(report, schema)}
 
 <section><h2>All types <span class="h2-note">${Object.keys(report.types).length - [...rootNames].filter((n) => report.types[n]).length}</span></h2>${typeRows}</section>
-<section><h2>Input types <span class="h2-note">${Object.keys(report.inputTypes).length}</span></h2><p class="legend">Green: sent, and omitted too where optional. Amber: sent but never omitted. Plain: never sent. ! marks required fields.</p>${inputRows}</section>
+<section><h2>Input types <span class="h2-note">${Object.keys(report.inputTypes).length}</span></h2><p class="legend">Green: sent, and omitted too where optional. Amber: sent but never omitted. Plain: never sent. ! marks required fields. "null n" counts explicit nulls for fields that accept null.</p>${inputRows}</section>
 <section><h2>Enums <span class="h2-note">${Object.keys(report.enums).length}</span></h2><p class="legend">Enums a client can send are scored on values sent. Output-only enums ("out enum") are scored on values seen in responses and do not count toward the enum-values number.</p>${enumRows}</section>
 ${abstractSection(report)}
 ${testsSection(report)}

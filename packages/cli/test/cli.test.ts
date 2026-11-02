@@ -327,6 +327,9 @@ describe("gqlcov merge, diff and gate", () => {
     expect(fail.err).toContain("gate: FAILED");
     expect(fail.err).toContain("[clubs] field coverage 0% is below the minimum 10%");
     expect(fail.err).toContain("--min-used-fields needs production usage");
+    const nulls = await cli("gate", fullPath, "--min-input-null", "50");
+    expect(nulls.out).toMatch(/Nullable inputs sent as null\s+0%  \(0\/2\)/);
+    expect(nulls.err).toContain("0% of nullable input fields were sent as null, below the minimum 50%");
     const used = await cli("gate", fullPath, "--min-used-fields", "99");
     expect(used.err).toMatch(/of fields with production traffic are tested/);
     expect((await cli("gate", fullPath)).out).toContain("gate: passed");
@@ -353,11 +356,13 @@ describe("gqlcov merge, diff and gate", () => {
   it("prints older reports without the observed or usage numbers", async () => {
     const legacy = readJson(fullPath) as unknown as Record<string, Record<string, unknown>>;
     delete legacy.summary.enumValuesObserved;
+    delete legacy.summary.inputFieldsNull;
     delete legacy.usage;
     writeFileSync(at("g", "legacy.json"), JSON.stringify(legacy));
     const r = await cli("gate", at("g", "legacy.json"));
     expect(r.out).not.toContain("Enum values in responses");
     expect(r.out).not.toContain("Production fields tested");
+    expect(r.out).not.toContain("Nullable inputs");
   });
 });
 

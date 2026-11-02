@@ -71,6 +71,7 @@ gqlcov: 5 operations (3 queries, 2 mutations, 0 subscriptions), schema 9c5b5e1ae
   Arguments                           42.86%  (3/7)
   Input-type fields sent                 70%  (7/10)
   Optional inputs sent and omitted    28.57%  (2/7)
+  Nullable inputs sent as null           25%  (2/8)
   Enum values                         42.86%  (3/7)
 ```
 
@@ -186,9 +187,9 @@ Mapping:
 | --- | --- |
 | Line | an output field, input field or enum value (hit when requested or sent) |
 | Function | a root operation field on Query, Mutation or Subscription |
-| Branch | each argument of a field; for an optional input field, the two arms *sent* and *omitted* |
+| Branch | each argument of a field; for an optional input field, the arms *sent* and *omitted*; for an input field that accepts null, one more arm *null* |
 
-So "80% lines, 50% functions, 57% branches" reads as: 80% of the schema surface was touched, half the operations ran, and 57% of arguments and optional-input states were exercised.
+So "80% lines, 50% functions, 57% branches" reads as: 80% of the schema surface was touched, half the operations ran, and 57% of arguments and input states (sent, omitted, null) were exercised.
 
 - **Codecov / Coveralls**: upload `.gqlcov/lcov.info` as one more coverage file alongside your Jest or c8 output. Flag it (`-F schema`) to get a separate trend line.
 - **SonarQube**: add `.gqlcov/lcov.info` to `sonar.javascript.lcov.reportPaths` (Sonar reads LCOV for any file the project contains).
@@ -212,7 +213,7 @@ gqlcov markdown <report> [--base report.json] [-o summary.md]
 gqlcov comment <summary.md> [--id name] [--token t] [--repo owner/name] [--pr n]
 gqlcov merge   <report>... -o merged.json          # parallel shards
 gqlcov diff    <base> <head> [--json]
-gqlcov gate    <report> [--min-fields n] [--min-input-fields n] [--min-enum-values n] [--base report.json] [--tolerance points] [--subgraph name...|'*'] [--min-used-fields n] [--min-used-inputs n] [--require pattern...] [--max-invalid n]       # a missing --base file skips the no-decrease check
+gqlcov gate    <report> [--min-fields n] [--min-input-fields n] [--min-input-null n] [--min-enum-values n] [--base report.json] [--tolerance points] [--subgraph name...|'*'] [--min-used-fields n] [--min-used-inputs n] [--require pattern...] [--max-invalid n]       # a missing --base file skips the no-decrease check
 ```
 
 `gate --require` takes the same patterns and fails when any element they match is uncovered, which says "every mutation has a test" more directly than a percentage: `gqlcov gate .gqlcov/report.json --require "Mutation.*" "Query.payment*" "PaymentInput.*"`. A pattern that matches nothing fails too, so a typo cannot pass. Values of output-only enums count as covered once a response returned them.
@@ -288,6 +289,7 @@ gqlcov gate .gqlcov/report.json --max-invalid 0
 - Argument values are read as the client wrote them: variables (`$x`) as sent, literals without type coercion, so an input field's default value never counts as sent and enum values count by name. A variable that was not supplied counts as an absent argument or input field.
 - Each value is walked against its input type: input-object fields are marked *sent* or *omitted*, enum values are counted, scalars and lists are classified. Lists recurse into their items; a bare value for a list type is treated as a one-item list, as GraphQL coercion does.
 - A field counts as covered when it was requested at least once. An optional input field counts as "both states" when it was both sent and omitted somewhere in the run.
+- An input field that accepts null counts as "sent as null" when a client sent an explicit `null` for it. For a partial update that is the "clear this value" case, and servers handle it inconsistently (some drop the null, some cannot tell it from an omitted field), so it is tracked as its own number: `summary.inputFieldsNull`, gated with `--min-input-null`. A null item inside a list does not count.
 
 ## Why not combinations
 

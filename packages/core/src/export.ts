@@ -64,7 +64,9 @@ function elements(report: CoverageReport, lines: SchemaLineMap): { els: Element[
       const line = lines.get(path);
       if (!line) continue;
       els.push({ path, line, hits: f.sent, kind: "input", root: false });
-      if (!f.required) branches.push({ path, line, arms: [{ name: "sent", hits: f.sent }, { name: "omitted", hits: f.omitted }] });
+      const arms = f.required ? [] : [{ name: "sent", hits: f.sent }, { name: "omitted", hits: f.omitted }];
+      if (f.nullable) arms.push({ name: "null", hits: f.nulled! });
+      if (arms.length) branches.push({ path, line, arms });
     }
   }
   for (const [en, e] of Object.entries(report.enums)) {
@@ -83,7 +85,7 @@ function elements(report: CoverageReport, lines: SchemaLineMap): { els: Element[
 
 /**
  * LCOV for Codecov, Coveralls, SonarQube (via lcov import) and `genhtml`.
- * Lines = output fields, input fields, values of input-reachable enums. Functions = root operation fields. Branches = arguments and optional-input sent/omitted.
+ * Lines = output fields, input fields, values of input-reachable enums. Functions = root operation fields. Branches = arguments, optional-input sent/omitted, and null for nullable inputs.
  */
 export function toLcov(report: CoverageReport, sdl: string | DocumentNode, schemaPath: string): string {
   const { els, branches } = elements(report, schemaLineMap(sdl));
