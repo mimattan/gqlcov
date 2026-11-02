@@ -14,6 +14,7 @@ import {
   isListType,
   isNonNullType,
   isObjectType,
+  isUnionType,
   Kind,
   parse,
   TypeInfo,
@@ -30,6 +31,7 @@ import { attributeSubgraphs, subgraphsFromSdls, subgraphsFromSupergraph } from "
 import { applyUsage } from "./usage.js";
 import { resolvePersisted, type PersistedManifest } from "./persisted.js";
 import type {
+  AbstractTypeCoverage,
   CapturedOperation,
   CoverageOptions,
   CoverageReport,
@@ -101,6 +103,12 @@ export function emptyReport(schemaInput: string | object | GraphQLSchema, option
     }
   }
   markEnumReachability(schema, types, inputTypes, enums);
+  const abstractTypes: Record<string, AbstractTypeCoverage> = {};
+  for (const type of Object.values(schema.getTypeMap())) {
+    if ((!isInterfaceType(type) && !isUnionType(type)) || ex.isExcluded(type.name)) continue;
+    const possible = schema.getPossibleTypes(type).filter((t) => types[t.name]);
+    abstractTypes[type.name] = { kind: isUnionType(type) ? "UNION" : "INTERFACE", seen: 0, possible: Object.fromEntries(possible.map((t) => [t.name, 0])) };
+  }
 
   const report: CoverageReport = {
     version: 1,
@@ -113,6 +121,7 @@ export function emptyReport(schemaInput: string | object | GraphQLSchema, option
     inputTypes,
     enums,
     argumentValues,
+    abstractTypes,
   };
   return report;
 }
@@ -357,7 +366,48 @@ export function recordOperation(report: CoverageReport, schema: GraphQLSchema, o
     if (!ec) continue;
     for (const v of new Set(values)) if (ec.values[v]) ec.values[v].observed++;
   }
+  if (op.responseValues) report.operations.responses = (report.operations.responses ?? 0) + 1;
+  for (const [path, outcomes] of Object.entries(op.responseValues ?? {})) {
+    const dot = path.indexOf(".");
+    const fc = report.types[path.slice(0, dot)]?.fields[path.slice(dot + 1)];
+    if (!fc) continue;
+    const returned = (fc.returned ??= { value: 0, null: 0, empty: 0 });
+    for (const o of new Set(outcomes)) returned[o]++;
+  }
+  for (const [name, concrete] of Object.entries(op.responseTypes ?? {})) {
+    const at = report.abstractTypes?.[name];
+    if (!at) continue;
+    at.seen++;
+    for (const t of new Set(concrete)) if (at.possible[t] !== undefined) at.possible[t]++;
+  }
   return { valid: true, errors: [] };
+}
+
+/**
+ * The two response-based numbers, set on the summary only when some capture carried response data:
+ * requested fields that came back with a value, and possible types of the interfaces and unions seen in responses.
+ */
+export function summariseResponses(report: CoverageReport): void {
+  delete report.summary.fieldsReturned;
+  delete report.summary.possibleTypes;
+  if (!report.operations.responses) return;
+  let fC = 0, fT = 0, pC = 0, pT = 0;
+  for (const t of Object.values(report.types))
+    for (const f of Object.values(t.fields)) {
+      if (!f.returned) continue;
+      fT++;
+      if (f.returned.value > 0) fC++;
+    }
+  for (const at of Object.values(report.abstractTypes ?? {})) {
+    if (!at.seen) continue;
+    for (const n of Object.values(at.possible)) {
+      pT++;
+      if (n > 0) pC++;
+    }
+  }
+  // Each number appears only when there is something to count: 0 of 0 would read as a perfect score.
+  if (fT) report.summary.fieldsReturned = ratio(fC, fT);
+  if (pT) report.summary.possibleTypes = ratio(pC, pT);
 }
 
 export interface ComputeOptions extends CoverageOptions {
@@ -385,6 +435,7 @@ export function computeCoverage(
   if (run) report.run = run;
   for (const op of resolvePersisted([...operations], persisted)) recordOperation(report, schema, op);
   report.summary = summarise(report);
+  summariseResponses(report);
   const membership = subgraphSdls && Object.keys(subgraphSdls).length ? subgraphsFromSdls(subgraphSdls) : subgraphsFromSupergraph(schema);
   if (membership) attributeSubgraphs(report, membership);
   if (usage) applyUsage(report, usage);

@@ -26,6 +26,8 @@ function printSummary(r: CoverageReport): void {
   console.log(line("Enum values sent", s.enumValues));
   // Older reports have no observed number.
   if (s.enumValuesObserved) console.log(line("Enum values in responses (not gated)", s.enumValuesObserved));
+  if (s.fieldsReturned) console.log(line("Fields returning a value (not gated)", s.fieldsReturned));
+  if (s.possibleTypes) console.log(line("Possible types returned (not gated)", s.possibleTypes));
   if (r.usage) console.log(line("Production fields tested", r.usage.usedFields));
   if (r.usage?.usedInputs) console.log(line("Production inputs sent by a test", r.usage.usedInputs));
   printSubgraphs(r);
@@ -127,7 +129,8 @@ export function buildCli(): Command {
         console.log(`  report: ${o.out}${o.html ? `, html: ${o.html}` : ""}${o.lcov ? `, lcov: ${o.lcov}` : ""}${o.istanbul ? `, istanbul: ${o.istanbul}` : ""}`);
         if (o.untested) {
           const u = uncovered(report);
-          for (const [k, v] of Object.entries(u)) if (v.length) console.log(`\n  ${k} (${v.length}):\n    ${v.join("\n    ")}`);
+          const titles: Record<keyof typeof u, string> = { fields: "fields", arguments: "arguments", inputFields: "input fields", enumValues: "enum values", neverReturned: "requested, but never returned a value", possibleTypes: "possible types never returned" };
+          for (const [k, v] of Object.entries(u)) if (v.length) console.log(`\n  ${titles[k as keyof typeof u]} (${v.length}):\n    ${v.join("\n    ")}`);
         }
       }
     });
@@ -236,7 +239,7 @@ export function buildCli(): Command {
     .action((base: string, head: string, o) => {
       const d = diffReports(readReport(base), readReport(head));
       if (o.json) return console.log(JSON.stringify(d, null, 2));
-      for (const [k, v] of Object.entries(d.delta)) console.log(`  ${k.padEnd(24)} ${d.base.summary[k as keyof typeof d.base.summary].percent}% -> ${d.head.summary[k as keyof typeof d.head.summary].percent}% (${v >= 0 ? "+" : ""}${v})`);
+      for (const [k, v] of Object.entries(d.delta)) console.log(`  ${k.padEnd(24)} ${d.base.summary[k as keyof typeof d.base.summary]!.percent}% -> ${d.head.summary[k as keyof typeof d.head.summary]!.percent}% (${v >= 0 ? "+" : ""}${v})`);
       const show = (t: string, l: string[]) => l.length && console.log(`\n  ${t} (${l.length}):\n    ${l.join("\n    ")}`);
       for (const [name, delta] of Object.entries(d.subgraphs ?? {})) {
         console.log(`\n  subgraph ${name}`);

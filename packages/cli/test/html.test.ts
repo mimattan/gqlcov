@@ -119,6 +119,35 @@ describe("renderHtml", () => {
     expect(tests).toContain('<span class="fname">CourtInput.surface</span><span class="hits">only this test</span>');
   });
 
+  it("shows response numbers, fields that never came back, and interface implementations", () => {
+    const html = renderHtml(
+      computeCoverage(schema, [
+        { document: `{ competition { list { id } } node(id: "1") { __typename id } }`, responseValues: { "Query.competition": ["value"], "CompetitionQueries.list": ["empty"], "Query.node": ["value"], "Node.id": ["value"] }, responseTypes: { Node: ["Court"] } },
+        { document: `{ courts { name } }`, responseValues: { "Query.courts": ["value"], "Court.name": ["null", "empty"] } },
+      ]),
+      schema,
+    );
+    expect(html).toContain(`<span class="ledger-label">Fields that returned a value<small>`);
+    expect(html).toContain(`<span class="ledger-label">Possible types returned<small>`);
+    expect(html).toContain(`<span class="noval" title="requested, but every response had it as an empty list">always empty</span>`);
+    expect(html).toContain(`<span class="noval" title="requested, but every response had it as null or an empty list">null or empty</span>`);
+    const abstract = between(html, "<h2>Interfaces and unions", "</section>");
+    expect(abstract).toContain('<span class="kind">interface</span>Node');
+    expect(abstract).toContain('<li class="on" data-n="court"><span class="fname">Court</span><span class="hits">in 1 responses</span></li>');
+  });
+
+  it("says when a field was only ever null, and when no __typename was seen", () => {
+    const s = `interface N { id: ID! } type A implements N { id: ID!, x: Int } type B implements N { id: ID! } union U = A type Query { n: N, u: U, a: A }`;
+    const r = computeCoverage(s, [{ document: `{ a { x } n { __typename } }`, responseValues: { "Query.a": ["value"], "A.x": ["null"] }, responseTypes: { N: ["A"] } }]);
+    const out = renderHtml(r);
+    expect(out).toContain('<li class="off" data-n="b"><span class="fname">B</span><span class="hits">never returned</span></li>');
+    delete r.abstractTypes; // a report from before the interface and union table
+    expect(renderHtml(r)).toContain('<h2>Interfaces and unions <span class="h2-note">0</span></h2>');
+    expect(out).toContain(`<span class="noval" title="requested, but every response had it as null">always null</span>`);
+    expect(out).toContain('<span class="kind">union</span>U');
+    expect(out).toContain('<span class="hits">no __typename seen</span>');
+  });
+
   it("renders a bare report: no schema, no operations, no usage or subgraphs, older enum format", () => {
     const bare = computeCoverage(`enum E { A } type Thing { x: Int } type Query { a(e: E): Int, b: Int, t: [Thing] }`, [], { exclude: ["Thing.*"] }) as CoverageReport;
     delete (bare.enums.E as Partial<typeof bare.enums.E>).input;
@@ -134,6 +163,8 @@ describe("renderHtml", () => {
     expect(out).not.toContain("Grouped by namespace");
     expect(out).not.toContain('<section class="tests">');
     expect(out).not.toContain('class="by"');
+    expect(out).not.toContain("Interfaces and unions");
+    expect(out).not.toContain("Fields that returned a value");
     expect(out).toMatch(/<span class="kind">enum<\/span>E/);
     expect(out).toMatch(/Thing<\/span><span class="mini">.*?width:100%.*?0\/0/); // a type with every field excluded
     expect(out).toMatch(/schema [0-9a-f]+ &nbsp;\/&nbsp; generated/);

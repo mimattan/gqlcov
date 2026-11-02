@@ -1,5 +1,5 @@
 import { getNamedType, isListType, isNonNullType, isObjectType, type GraphQLObjectType, type GraphQLSchema } from "graphql";
-import { fmtRequests, testCoverage, type CoverageReport, type EnumValueCoverage, type Ratio } from "@gqlcov/core";
+import { fmtRequests, testCoverage, type CoverageReport, type EnumValueCoverage, type FieldCoverage, type Ratio } from "@gqlcov/core";
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const pct = (c: number, t: number) => (t === 0 ? 100 : Math.round((c / t) * 1000) / 10);
@@ -18,6 +18,12 @@ interface Row { name: string; covered: number; total: number; body: string; kind
 const gAttr = (graphs?: string[]) => (graphs ? ` data-g="${esc(graphs.join(" "))}"` : "");
 /** Test names on a list item: searchable through data-t, readable in a short label with the full list on hover. */
 const tAttr = (tests?: string[]) => (tests ? ` data-t="${esc(tests.join("\n").toLowerCase())}"` : "");
+/** A requested field that never came back with a value: the test asks for it but never sees data. */
+const noValueBadge = (f: FieldCoverage) =>
+  f.hits > 0 && f.returned && f.returned.value === 0
+    ? `<span class="noval" title="requested, but every response had it as ${f.returned.null && f.returned.empty ? "null or an empty list" : f.returned.null ? "null" : "an empty list"}">${f.returned.null && f.returned.empty ? "null or empty" : f.returned.null ? "always null" : "always empty"}</span>`
+    : "";
+
 /** Production traffic badge: red when the element has traffic but no test. */
 const prodBadge = (requests: number | undefined, tested: boolean) =>
   requests === undefined ? "" : `<span class="prod${requests > 0 && !tested ? " risk" : ""}" title="production requests in the usage window">${requests > 0 ? `${fmtRequests(requests)} in prod` : "no prod traffic"}</span>`;
@@ -33,7 +39,7 @@ function typeRow(report: CoverageReport, tn: string, label?: string): Row {
       const args = Object.entries(f.args);
       const argText = args.length ? `<span class="args">(${args.map(([an, a]) => `<span class="${a.hits > 0 ? "on" : "off"}" title="${a.hits} hits${a.tests ? `: ${esc(a.tests.join(", "))}` : ""}">${esc(an)}</span>`).join(", ")})</span>` : "";
       const prod = prodBadge(f.requests, f.hits > 0);
-      return `<li class="${f.hits > 0 ? "on" : "off"}" data-n="${esc(fn.toLowerCase())}"${gAttr(f.graphs)}${tAttr(f.tests)}><span class="fname">${esc(fn)}${argText}</span><span class="hits">${byTests(f.tests)}${prod}${f.hits > 0 ? `${f.hits}×` : "never"}</span></li>`;
+      return `<li class="${f.hits > 0 ? "on" : "off"}" data-n="${esc(fn.toLowerCase())}"${gAttr(f.graphs)}${tAttr(f.tests)}><span class="fname">${esc(fn)}${argText}</span><span class="hits">${noValueBadge(f)}${byTests(f.tests)}${prod}${f.hits > 0 ? `${f.hits}×` : "never"}</span></li>`;
     })
     .join("");
   return { name: label ?? tn, covered, total: fields.length, body: `<ul class="fields">${lines}</ul>`, kind: t.kind === "INTERFACE" ? "interface" : "type", uncovered: covered < fields.length, graphs: t.graphs };
@@ -127,6 +133,20 @@ function usageSection(report: CoverageReport): string {
   return `<section class="usage"><h2>Production usage <span class="h2-note">${where}</span></h2><p class="hint">${u.usedFields.total} fields had production traffic; ${u.usedFields.covered} of them were requested by a test.${u.usedInputs ? ` ${u.usedInputs.total} input fields and enum values had traffic; a test sent ${u.usedInputs.covered} of them.` : ""}</p><div class="row risk-box"><div class="risk-head">Used in production, never tested <span class="h2-note">${u.untestedUsed.length}</span></div>${risk}</div>${list("Tested, no production traffic", u.testedUnused)}${list("No traffic and no test: deprecation candidates", u.unusedUntested)}${list("In usage data but not in the schema", u.unknown)}</section>`;
 }
 
+/** Interfaces and unions, with which of their possible types came back; only when captures carried responses. */
+function abstractSection(report: CoverageReport): string {
+  if (!report.operations.responses) return "";
+  const rows = Object.entries(report.abstractTypes ?? {})
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([name, a]) => {
+      const possible = Object.entries(a.possible);
+      const covered = possible.filter(([, n]) => n > 0).length;
+      const items = possible.map(([tn, n]) => `<li class="${n > 0 ? "on" : "off"}" data-n="${esc(tn.toLowerCase())}"><span class="fname">${esc(tn)}</span><span class="hits">${n > 0 ? `in ${n} responses` : a.seen ? "never returned" : "no __typename seen"}</span></li>`).join("");
+      return renderRow({ name, covered, total: possible.length, body: `<ul class="fields">${items}</ul>`, kind: a.kind === "UNION" ? "union" : "interface", uncovered: covered < possible.length });
+    });
+  return `<section><h2>Interfaces and unions <span class="h2-note">${rows.length}</span></h2><p class="legend">Which possible types came back in responses, read from <code>__typename</code> where the operation selected it.</p>${rows.join("")}</section>`;
+}
+
 function testsSection(report: CoverageReport): string {
   const list = testCoverage(report);
   if (!list.length) return "";
@@ -205,6 +225,7 @@ body.only-gaps .row.full:not(.aux),body.only-gaps li.on{display:none}
 .empty{color:var(--ink2);font-size:14px;padding:12px 0}
 .prod{display:inline-block;margin-right:10px;padding:1px 7px;border-radius:10px;background:var(--track);color:var(--ink2);font-size:11.5px}.prod.risk{background:var(--low);color:#fff}
 .usage{margin-bottom:28px}.risk-box{padding:0}.risk-head{padding:10px 14px;font-weight:550}.risk-box .fields{border-top:1px solid var(--line)}
+.noval{display:inline-block;margin-right:10px;padding:1px 7px;border-radius:10px;background:var(--half-bg);color:var(--mid);font-size:11.5px}
 .by{display:inline-block;margin-right:10px;color:var(--accent);font-size:11.5px;max-width:220px;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom}
 .tests .row.redundant .rname{color:var(--ink2)}
 .subgraphs{margin-bottom:28px}.sg{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line);border-radius:8px;font-size:13.5px}
@@ -227,6 +248,8 @@ ${ledger("Input fields", s.inputFields, "sent at least once")}
 ${ledger("Optional input fields, both states", s.inputFieldsBothStates, "seen sent and seen omitted")}
 ${ledger("Enum values", s.enumValues, "sent as input at least once; enums a client can send")}
 ${s.enumValuesObserved ? ledger("Enum values in responses", s.enumValuesObserved, "returned at least once; informational, never gated") : ""}
+${s.fieldsReturned ? ledger("Fields that returned a value", s.fieldsReturned, "requested fields that came back non-null and non-empty at least once; informational") : ""}
+${s.possibleTypes ? ledger("Possible types returned", s.possibleTypes, "implementations and members of interfaces and unions seen in responses; informational") : ""}
 ${ledger("Types", s.types, "touched by any operation")}
 ${report.usage ? ledger("Production fields tested", report.usage.usedFields, "fields with production traffic that a test requested") : ""}
 ${report.usage?.usedInputs ? ledger("Production inputs sent by a test", report.usage.usedInputs, "input fields and enum values with production traffic that a test sent") : ""}
@@ -241,6 +264,7 @@ ${rootSections(report, schema)}
 <section><h2>All types <span class="h2-note">${Object.keys(report.types).length - [...rootNames].filter((n) => report.types[n]).length}</span></h2>${typeRows}</section>
 <section><h2>Input types <span class="h2-note">${Object.keys(report.inputTypes).length}</span></h2><p class="legend">Green: sent, and omitted too where optional. Amber: sent but never omitted. Plain: never sent. ! marks required fields.</p>${inputRows}</section>
 <section><h2>Enums <span class="h2-note">${Object.keys(report.enums).length}</span></h2><p class="legend">Enums a client can send are scored on values sent. Output-only enums ("out enum") are scored on values seen in responses and do not count toward the enum-values number.</p>${enumRows}</section>
+${abstractSection(report)}
 ${testsSection(report)}
 <section><h2>Operations <span class="h2-note">${named.length}</span></h2>${named.length ? `<ul class="fields" style="border:1px solid var(--line);border-radius:8px;background:var(--panel)">${named.map(([n, c]) => `<li class="on"><span class="fname">${esc(n)}</span><span class="hits">${c}×</span></li>`).join("")}</ul>` : `<p class="empty">No operations in this run.</p>`}</section>
 </main>

@@ -4,7 +4,7 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildSchema, getIntrospectionQuery, graphqlSync } from "graphql";
-import { writeCapture, type CoverageReport } from "@gqlcov/core";
+import { computeCoverage, writeCapture, type CoverageReport } from "@gqlcov/core";
 import { buildCli } from "../src/index.js";
 
 const sdl = /* GraphQL */ `
@@ -74,7 +74,7 @@ beforeAll(async () => {
   const caps = at("captures");
   writeCapture(caps, { document: `query Clubs { clubs { id name courts(filter: { surface: CLAY }) { id status } } }`, responseEnums: { Status: ["OPEN"] }, source: "club list" });
   writeCapture(caps, { document: `mutation Rename { renameClub(id: "1", name: "x") { id } }`, source: "rename club" });
-  writeCapture(caps, { document: `query Again { clubs { id } }`, source: "club list again" });
+  writeCapture(caps, { document: `query Again { clubs { id } }`, source: "club list again", responseValues: { "Query.clubs": ["value"], "Club.id": ["value"] } });
   writeCapture(caps, { document: `{ nope }` });
   writeCapture(caps, { persistedId: "p1" });
   writeCapture(caps, { persistedId: "p2" });
@@ -130,7 +130,10 @@ describe("gqlcov report", () => {
     expect(inputsGate.err).toContain("33.33% of input fields and enum values with production traffic are sent by a test, below the minimum 75% (2 untested: CourtFilter.indoor, Surface.HARD)");
     expect(r.out).toMatch(/in usage but not in the schema \(30\): .*, \.\.\./);
     expect(r.out).toContain("1 captures carried only a persisted id");
+    expect(r.out).toMatch(/Fields returning a value \(not gated\)\s+100%  \(2\/2\)/);
+    expect(r.out).not.toContain("Possible types returned"); // no interface or union came back: nothing to count
     expect(r.out).toMatch(/\n  fields \(\d+\):\n    /);
+    expect(r.out).toMatch(/\n  input fields \(\d+\):\n    /);
     const report = readJson(at("full", "report.json"));
     expect(report.run).toMatchObject({ sha: "abc123", branch: "feature" });
     expect(report.inputTypes.CourtFilter.fields.legacy).toBeDefined(); // --include-deprecated
@@ -323,6 +326,15 @@ describe("gqlcov merge, diff and gate", () => {
     const firstRun = await cli("gate", fullPath, "--base", at("g", "no-base-yet.json"));
     expect(firstRun.out).toContain(`base report ${at("g", "no-base-yet.json")} not found: skipping the no-decrease check`);
     expect(firstRun.code).toBe(0);
+  });
+
+  it("prints the possible-types number when responses showed an interface", async () => {
+    const r = computeCoverage(`interface N { id: ID! } type A implements N { id: ID! } type B implements N { id: ID! } type Query { n: N }`, [
+      { document: `{ n { __typename id } }`, responseValues: { "Query.n": ["value"], "N.id": ["value"] }, responseTypes: { N: ["A"] } },
+    ]);
+    writeFileSync(at("g", "abstract.json"), JSON.stringify(r));
+    const out = await cli("gate", at("g", "abstract.json"));
+    expect(out.out).toMatch(/Possible types returned \(not gated\)\s+50%  \(1\/2\)/);
   });
 
   it("prints older reports without the observed or usage numbers", async () => {

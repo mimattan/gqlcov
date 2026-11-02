@@ -77,6 +77,19 @@ describe("toMarkdown with production usage of inputs", () => {
   });
 });
 
+describe("toMarkdown with response data", () => {
+  it("adds the response numbers and lists what never came back", () => {
+    const rs = `interface Node { id: ID! } type A implements Node { id: ID!, x: Int } type B implements Node { id: ID! } type Query { node: Node, a: A }`;
+    const r = computeCoverage(rs, [{ document: `{ node { __typename id } a { x } }`, responseValues: { "Query.node": ["value"], "Node.id": ["value"], "Query.a": ["value"], "A.x": ["null"] }, responseTypes: { Node: ["A"] } }]);
+    const md = toMarkdown(r);
+    expect(md).toContain("| Fields that returned a value | 75% | 3 of 4 |");
+    expect(md).toContain("| Possible types returned | 50% | 1 of 2 |");
+    expect(md).toContain("<details><summary>Requested, but never returned a value (1)</summary>\n\n- `A.x`");
+    expect(md).toContain("<details><summary>Possible types never returned (1)</summary>\n\n- `Node.B`");
+    expect(toMarkdown(r, computeCoverage(rs, []))).toContain("| Fields that returned a value | – | 75% | new |");
+  });
+});
+
 describe("fmtRequests", () => {
   it("formats plain numbers, thousands and millions", () => {
     expect([fmtRequests(950), fmtRequests(9999), fmtRequests(15_400), fmtRequests(2_460_000)]).toEqual(["950", "9999", "15k", "2.5M"]);

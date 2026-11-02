@@ -12,6 +12,8 @@ const ROWS: [keyof CoverageSummary, string][] = [
   ["enumValues", "Enum values"],
   ["enumValuesObserved", "Enum values in responses"],
   ["types", "Types"],
+  ["fieldsReturned", "Fields that returned a value"],
+  ["possibleTypes", "Possible types returned"],
 ];
 
 const pct = (r: Ratio) => `${r.percent}%`;
@@ -38,17 +40,18 @@ export function toMarkdown(head: CoverageReport, base?: CoverageReport): string 
   const ops = head.operations;
   out.push(`${ops.total} operations (${ops.query} queries, ${ops.mutation} mutations, ${ops.subscription} subscriptions)${ops.invalid ? `, ${ops.invalid} invalid` : ""}${ops.unresolved ? `, ${ops.unresolved} unresolved persisted ids` : ""}.`, "");
 
-  const rows = ROWS.filter(([k]) => head.summary[k]);
+  // Optional metrics appear only when the report has them.
+  const rows = ROWS.filter(([k]) => head.summary[k]).map(([k, label]) => [k, label, head.summary[k]!] as const);
   const usage = head.usage?.usedFields;
   const inputs = head.usage?.usedInputs;
   if (base) {
     out.push("| Metric | Base | This change | Change |", "| --- | ---: | ---: | ---: |");
-    for (const [k, label] of rows) out.push(`| ${label} | ${base.summary[k] ? pct(base.summary[k]) : "–"} | ${pct(head.summary[k])} | ${change(head.summary[k], base.summary[k])} |`);
+    for (const [k, label, r] of rows) out.push(`| ${label} | ${base.summary[k] ? pct(base.summary[k]!) : "–"} | ${pct(r)} | ${change(r, base.summary[k])} |`);
     if (usage) out.push(`| Production fields tested | ${base.usage ? pct(base.usage.usedFields) : "–"} | ${pct(usage)} | ${change(usage, base.usage?.usedFields)} |`);
     if (inputs) out.push(`| Production inputs sent by a test | ${base.usage?.usedInputs ? pct(base.usage.usedInputs) : "–"} | ${pct(inputs)} | ${change(inputs, base.usage?.usedInputs)} |`);
   } else {
     out.push("| Metric | Coverage | Covered |", "| --- | ---: | ---: |");
-    for (const [k, label] of rows) out.push(`| ${label} | ${pct(head.summary[k])} | ${head.summary[k].covered} of ${head.summary[k].total} |`);
+    for (const [, label, r] of rows) out.push(`| ${label} | ${pct(r)} | ${r.covered} of ${r.total} |`);
     if (usage) out.push(`| Production fields tested | ${pct(usage)} | ${usage.covered} of ${usage.total} |`);
     if (inputs) out.push(`| Production inputs sent by a test | ${pct(inputs)} | ${inputs.covered} of ${inputs.total} |`);
   }
@@ -60,7 +63,7 @@ export function toMarkdown(head: CoverageReport, base?: CoverageReport): string 
     for (const n of subgraphs) {
       const h = head.subgraphs![n];
       const b = base?.subgraphs?.[n];
-      const cell = (k: keyof CoverageSummary) => `${pct(h[k])}${base ? ` (${change(h[k], b?.[k])})` : ""}`;
+      const cell = (k: "fields" | "inputFields" | "enumValues") => `${pct(h[k])}${base ? ` (${change(h[k], b?.[k])})` : ""}`;
       out.push(`| ${n} | ${cell("fields")} | ${cell("inputFields")} | ${cell("enumValues")} |`);
     }
     out.push("");
@@ -81,7 +84,9 @@ export function toMarkdown(head: CoverageReport, base?: CoverageReport): string 
       details("Untested output fields", u.fields.map(code)) +
         details("Untested arguments", u.arguments.map(code)) +
         details("Untested input fields", u.inputFields.map(code)) +
-        details("Untested enum values", u.enumValues.map(code)),
+        details("Untested enum values", u.enumValues.map(code)) +
+        details("Requested, but never returned a value", u.neverReturned.map(code)) +
+        details("Possible types never returned", u.possibleTypes.map(code)),
     );
   }
   if (head.usage?.untestedUsed.length) out.push(details("Used in production, never tested", head.usage.untestedUsed.map((x) => `${code(x.path)}: ${fmtRequests(x.requests)} requests`), 25));

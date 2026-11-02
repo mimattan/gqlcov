@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { GraphQLEnumType, GraphQLInt, GraphQLObjectType, GraphQLSchema, Kind, parse, type DocumentNode } from "graphql";
-import { computeCoverage, diffReports, gate, mergeReports, parsePersistedManifest, schemaLineMap, summarise, toLcov, type CoverageReport } from "../src/index.js";
+import { computeCoverage, diffReports, gate, mergeReports, parsePersistedManifest, schemaLineMap, summarise, summariseResponses, toLcov, uncovered, type CoverageReport } from "../src/index.js";
 
 const sdl = /* GraphQL */ `
   enum Surface { CLAY HARD GRASS @deprecated(reason: "gone") }
@@ -238,5 +238,72 @@ describe("gate --require", () => {
     expect(gate(r, { require: ["Mutaton.*"] }).failures).toEqual(['required "Mutaton.*" matches nothing in the report (excluded and deprecated elements are not in it)']);
     const wide = computeCoverage(`type Query { ${Array.from({ length: 25 }, (_, i) => `f${i}: Int`).join(" ")} }`, []);
     expect(gate(wide, { require: ["Query.*"] }).failures[0]).toMatch(/^required "Query\.\*": 25 of 25 not covered: .* and 5 more$/);
+  });
+});
+
+describe("response-aware coverage", () => {
+  const rs = /* GraphQL */ `
+    interface Node { id: ID! }
+    type Court implements Node { id: ID!, name: String, tags: [String!]! }
+    type Club implements Node { id: ID!, courts: [Court!]! }
+    type Hidden implements Node { id: ID! }
+    union Thing = Court | Club
+    type Query { node(id: ID!): Node, things: [Thing!]!, court: Court }
+  `;
+  const ops = [
+    { document: `{ node(id: "1") { __typename id } court { name tags } }`, responseValues: { "Query.node": ["value" as const], "Node.id": ["value" as const], "Query.court": ["value" as const], "Court.name": ["null" as const], "Court.tags": ["empty" as const] }, responseTypes: { Node: ["Club", "Ghost"] } },
+    { document: `{ court { name } }`, responseValues: { "Query.court": ["value" as const], "Court.name": ["null" as const, "null" as const], "Gone.x": ["value" as const] }, responseTypes: { Unknown: ["X"] } },
+    { document: `{ things { __typename } }` },
+  ];
+
+  it("counts outcomes per field and concrete types per interface or union", () => {
+    const r = computeCoverage(rs, ops, { exclude: ["Hidden"] });
+    expect(r.operations.responses).toBe(2);
+    expect(r.types.Court.fields.name.returned).toEqual({ value: 0, null: 2, empty: 0 });
+    expect(r.types.Court.fields.tags.returned).toEqual({ value: 0, null: 0, empty: 1 });
+    expect(r.types.Query.fields.things.returned).toBeUndefined(); // that capture had no response data
+    expect(r.abstractTypes!.Node).toEqual({ kind: "INTERFACE", seen: 1, possible: { Court: 0, Club: 1 } }); // Hidden excluded, Ghost unknown
+    expect(r.abstractTypes!.Thing).toEqual({ kind: "UNION", seen: 0, possible: { Court: 0, Club: 0 } });
+    expect(r.summary.fieldsReturned).toMatchObject({ covered: 3, total: 5 }); // node, Node.id and court came back; name and tags did not
+    expect(r.summary.possibleTypes).toMatchObject({ covered: 1, total: 2 }); // Thing was never seen, so it does not count
+    const u = uncovered(r);
+    expect(u.neverReturned).toEqual(["Court.name", "Court.tags"]);
+    expect(u.possibleTypes).toEqual(["Node.Court"]);
+  });
+
+  it("leaves the numbers out without response data, and never gates them", () => {
+    const plain = computeCoverage(rs, [{ document: `{ court { name } }` }]);
+    expect(plain.summary.fieldsReturned).toBeUndefined();
+    expect(plain.summary.possibleTypes).toBeUndefined();
+    expect(uncovered(plain).neverReturned).toEqual([]);
+    const better = computeCoverage(rs, [{ document: `{ court { name } }`, responseValues: { "Court.name": ["value"] } }]);
+    const worse = computeCoverage(rs, [{ document: `{ court { name } }`, responseValues: { "Court.name": ["null"] } }]);
+    expect(gate(worse, { base: better }).passed).toBe(true);
+  });
+
+  it("adds outcomes, types and response counts on merge, skipping what one shard excluded", () => {
+    const a = computeCoverage(rs, ops.slice(0, 1));
+    const b = computeCoverage(rs, [{ document: `{ court { name } }`, responseValues: { "Court.name": ["value"] }, responseTypes: { Node: ["Court"], Thing: ["Club"] } }], { exclude: ["Thing"] });
+    const m = mergeReports([a, b, computeCoverage(rs, [])]);
+    expect(m.operations.responses).toBe(2);
+    expect(m.types.Court.fields.name.returned).toEqual({ value: 1, null: 1, empty: 0 });
+    expect(m.abstractTypes!.Node.possible).toEqual({ Court: 1, Club: 1, Hidden: 0 });
+    expect(m.summary.fieldsReturned!.covered).toBeGreaterThan(a.summary.fieldsReturned!.covered);
+    expect(mergeReports([computeCoverage(rs, []), a]).operations.responses).toBe(1);
+    const narrow = mergeReports([computeCoverage(rs, [], { exclude: ["Thing"] }), computeCoverage(rs, [{ document: `{ court { id } }`, responseTypes: { Thing: ["Court"] } }])]);
+    expect(narrow.abstractTypes!.Thing).toBeUndefined();
+  });
+
+  it("works on older reports without the interface and union table", () => {
+    const old = computeCoverage(rs, [{ document: `{ court { name } }`, responseValues: { "Court.name": ["value"] } }]);
+    delete old.abstractTypes;
+    summariseResponses(old);
+    expect(old.summary.possibleTypes).toBeUndefined();
+    expect(old.summary.fieldsReturned).toMatchObject({ covered: 1, total: 1 });
+    const nothingBack = computeCoverage(rs, [{ document: `{ court { name } }`, responseValues: {} }]);
+    expect(nothingBack.operations.responses).toBe(1);
+    expect(nothingBack.summary.fieldsReturned).toBeUndefined();
+    expect(uncovered(old).possibleTypes).toEqual([]);
+    expect(mergeReports([old, old]).operations.responses).toBe(2);
   });
 });

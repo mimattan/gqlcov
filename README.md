@@ -8,6 +8,8 @@ gqlcov records every operation the server runs during a test run and compares it
 - **Input coverage**: for every field of every input type, whether it was ever *sent*, ever *omitted*, and ever sent as *null*. This is the part no other tool does.
 - **Value classes**: which enum values were seen; per scalar whether empty, zero, negative and positive values were seen; per list whether empty, one and many were seen.
 - **Operations**: how many queries, mutations and subscriptions ran, by name.
+- **Responses** (server-side capture): which requested fields ever came back with a value, and which implementations of each interface or union came back.
+- **Tests**: which test covered what, from a label on each capture.
 
 Then it gates CI: fail below a minimum, or on any decrease versus the base branch.
 
@@ -71,6 +73,15 @@ gqlcov: 5 operations (3 queries, 2 mutations, 0 subscriptions), schema 9c5b5e1ae
   Optional inputs sent and omitted    28.57%  (2/7)
   Enum values                         42.86%  (3/7)
 ```
+
+## Did the data come back?
+
+A field counts as covered once a test requests it, even if every response had it as `null`. The Yoga/Envelop and Apollo plugins also record what each response contained, so the report adds two informational numbers (never gated):
+
+- **Fields that returned a value**: of the requested fields, how many came back non-null and non-empty at least once. A field that was always `null` or an empty list gets an "always null" or "always empty" badge in the HTML report and is listed by `--untested`: the test asks for it but never sees data, so a resolver that broke would go unnoticed.
+- **Possible types returned**: for each interface or union your tests got back, which of its implementations or members came back, read from `__typename` where the operation selected it (Apollo Client and most clients add it). The HTML report lists them per interface and union.
+
+Only names and outcomes are kept, never response data. The Playwright capture has no schema, so these numbers come from the server plugins only; both appear only when some capture carried response data.
 
 ## Which test covers what
 

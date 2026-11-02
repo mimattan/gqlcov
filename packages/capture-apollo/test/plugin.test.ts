@@ -32,6 +32,8 @@ describe("gqlcovCapturePlugin", () => {
     await run({ dir, enabled: true, source: (ctx) => ctx.who as string }, `query Q($id: ID!) { court(id: $id) { status } }`, { id: "1" }, "Q", { who: "test a" });
     const [op] = readCaptures(dir);
     expect(op).toMatchObject({ operationName: "Q", variables: { id: "1" }, source: "test a", responseEnums: { Status: ["OPEN"] } });
+    expect(op.responseValues).toEqual({ "Query.court": ["value"], "Court.status": ["value"] });
+    expect(op.responseTypes).toEqual({});
   });
 
   it("captures operations without a name, variables or data, and skips documents that never resolved", async () => {

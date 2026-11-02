@@ -1,4 +1,4 @@
-import { summarise, tagTest } from "./coverage.js";
+import { summarise, summariseResponses, tagTest } from "./coverage.js";
 import { summariseSubgraphs } from "./subgraphs.js";
 import { summariseUsage } from "./usage.js";
 import type { CoverageReport } from "./types.js";
@@ -18,6 +18,13 @@ export function mergeReports(reports: CoverageReport[]): CoverageReport {
     out.operations.subscription += r.operations.subscription;
     out.operations.invalid += r.operations.invalid;
     if (r.operations.unresolved) out.operations.unresolved = (out.operations.unresolved ?? 0) + r.operations.unresolved;
+    if (r.operations.responses) out.operations.responses = (out.operations.responses ?? 0) + r.operations.responses;
+    for (const [an, a] of Object.entries(r.abstractTypes ?? {})) {
+      const oa = out.abstractTypes?.[an];
+      if (!oa) continue;
+      oa.seen += a.seen;
+      for (const [tn, n] of Object.entries(a.possible)) if (oa.possible[tn] !== undefined) oa.possible[tn] += n;
+    }
     for (const [k, v] of Object.entries(r.operations.named)) out.operations.named[k] = (out.operations.named[k] ?? 0) + v;
     for (const [k, v] of Object.entries(r.tests ?? {})) (out.tests ??= {})[k] = (out.tests[k] ?? 0) + v;
     const union = (into: { tests?: string[] }, from: { tests?: string[] }) => from.tests?.forEach((t) => tagTest(into, t));
@@ -30,6 +37,10 @@ export function mergeReports(reports: CoverageReport[]): CoverageReport {
         if (!of) continue;
         of.hits += f.hits;
         union(of, f);
+        if (f.returned) {
+          const ret = (of.returned ??= { value: 0, null: 0, empty: 0 });
+          for (const k of ["value", "null", "empty"] as const) ret[k] += f.returned[k];
+        }
         for (const [an, a] of Object.entries(f.args)) {
           const oa = of.args[an];
           if (!oa) continue;
@@ -65,6 +76,7 @@ export function mergeReports(reports: CoverageReport[]): CoverageReport {
     for (const [k, v] of Object.entries(r.argumentValues)) if (out.argumentValues[k]) out.argumentValues[k] = addValueClasses(out.argumentValues[k], v);
   }
   out.summary = summarise(out);
+  summariseResponses(out);
   if (out.subgraphs) out.subgraphs = summariseSubgraphs(out);
   if (out.usage) out.usage = { ...out.usage, ...summariseUsage(out) };
   return out;

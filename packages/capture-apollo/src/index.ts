@@ -1,5 +1,5 @@
 import type { ApolloServerPlugin } from "@apollo/server";
-import { collectResponseEnums, DEFAULT_CAPTURE_DIR, writeCapture, type CapturedOperation } from "@gqlcov/core";
+import { collectResponse, DEFAULT_CAPTURE_DIR, writeCapture, type CapturedOperation } from "@gqlcov/core";
 import { print } from "graphql";
 
 export interface CaptureOptions {
@@ -16,7 +16,7 @@ function isEnabled(opt: CaptureOptions["enabled"]): boolean {
 
 /**
  * Apollo Server 4/5 plugin: captures every operation that resolved (parsed and validated) into the capture folder,
- * with the enum values its response contained.
+ * with what its response contained: enum values, whether each field came back with a value, and concrete types.
  */
 export function gqlcovCapturePlugin<TContext extends Record<string, unknown> = Record<string, unknown>>(
   options: CaptureOptions = {},
@@ -41,7 +41,10 @@ export function gqlcovCapturePlugin<TContext extends Record<string, unknown> = R
             // For incremental (deferred) responses only the initial payload is walked.
             const body = ctx.response.body;
             const data = body.kind === "single" ? body.singleResult.data : body.initialResult.data;
-            if (data) op.responseEnums = collectResponseEnums(ctx.schema, ctx.document, data, ctx.operationName);
+            if (data) {
+              const facts = collectResponse(ctx.schema, ctx.document, data, ctx.operationName);
+              Object.assign(op, { responseEnums: facts.enums, responseValues: facts.values, responseTypes: facts.types });
+            }
           } catch {
             // response walking is best effort
           }

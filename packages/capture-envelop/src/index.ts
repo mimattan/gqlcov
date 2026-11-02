@@ -1,5 +1,5 @@
 import type { Plugin } from "@envelop/core";
-import { collectResponseEnums, DEFAULT_CAPTURE_DIR, writeCapture, type CapturedOperation } from "@gqlcov/core";
+import { collectResponse, DEFAULT_CAPTURE_DIR, writeCapture, type CapturedOperation } from "@gqlcov/core";
 import { print, type DocumentNode, type GraphQLSchema } from "graphql";
 
 export interface CaptureOptions {
@@ -18,7 +18,8 @@ function isEnabled(opt: CaptureOptions["enabled"]): boolean {
 }
 
 /**
- * Captures every executed operation (document, operation name, variables, enum values in the response)
+ * Captures every executed operation (document, operation name, variables, and what the response contained:
+ * enum values, field outcomes and concrete types)
  * into one JSON file each. Works with any Envelop-based server, including GraphQL Yoga.
  */
 export function useGqlcovCapture(options: CaptureOptions = {}): Plugin {
@@ -35,9 +36,12 @@ export function useGqlcovCapture(options: CaptureOptions = {}): Plugin {
       return {
         onExecuteDone({ result }) {
           try {
-            // Streamed (incremental) results are captured without response enums.
+            // Streamed (incremental) results are captured without response facts.
             const data = "data" in result ? result.data : undefined;
-            if (data) op.responseEnums = collectResponseEnums(args.schema as GraphQLSchema, args.document as DocumentNode, data, args.operationName);
+            if (data) {
+              const facts = collectResponse(args.schema as GraphQLSchema, args.document as DocumentNode, data, args.operationName);
+              Object.assign(op, { responseEnums: facts.enums, responseValues: facts.values, responseTypes: facts.types });
+            }
           } catch {
             // response walking is best effort
           }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildSchema, parse } from "graphql";
-import { collectResponseEnums } from "../src/index.js";
+import { collectResponse, collectResponseEnums } from "../src/index.js";
 
 const schema = buildSchema(/* GraphQL */ `
   enum Status { OPEN CLOSED }
@@ -40,5 +40,36 @@ describe("collectResponseEnums", () => {
   it("returns nothing when the operation or its root type is missing", () => {
     expect(collectResponseEnums(schema, `query A { court { status } }`, { court: { status: "OPEN" } }, "B")).toEqual({});
     expect(collectResponseEnums(schema, `mutation { x }`, { x: 1 })).toEqual({});
+  });
+});
+
+describe("collectResponse", () => {
+  it("records field outcomes and the concrete types behind interfaces and unions", () => {
+    const doc = `{ node { __typename id } things { __typename ... on Court { kinds } ... on Club { status } } court { status kinds } }`;
+    const data = {
+      node: { __typename: "Club", id: "1" },
+      things: [{ __typename: "Court", kinds: [] }, { __typename: "Club", status: null }, { __typename: "Court", kinds: ["A"] }],
+      court: null,
+    };
+    const facts = collectResponse(schema, doc, data);
+    expect(facts.values).toEqual({
+      "Query.node": ["value"],
+      "Node.id": ["value"],
+      "Query.things": ["value"],
+      "Court.kinds": ["empty", "value"],
+      "Club.status": ["null"],
+      "Query.court": ["null"],
+    });
+    expect(facts.types).toEqual({ Node: ["Club"], Thing: ["Club", "Court"] });
+    expect(facts.enums).toEqual({ Kind: ["A"] });
+  });
+
+  it("learns no concrete types when __typename was not selected", () => {
+    expect(collectResponse(schema, `{ node { id } }`, { node: { id: "1" } }).types).toEqual({});
+    expect(collectResponse(schema, `{ node { __typename } }`, { node: null })).toMatchObject({ types: {}, values: { "Query.node": ["null"] } });
+  });
+
+  it("returns empty facts when the operation is missing", () => {
+    expect(collectResponse(schema, `query A { court { id } }`, {}, "B")).toEqual({ enums: {}, values: {}, types: {} });
   });
 });

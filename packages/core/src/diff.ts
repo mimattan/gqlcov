@@ -32,7 +32,7 @@ export function diffReports(base: CoverageReport, head: CoverageReport): Coverag
   // Keys missing from either side (a report from an older version) have no delta.
   const keys = (Object.keys(head.summary) as (keyof CoverageSummary)[]).filter((k) => base.summary[k]);
   const deltaOf = (b: CoverageSummary, h: CoverageSummary) =>
-    Object.fromEntries(keys.filter((k) => b[k] && h[k]).map((k) => [k, Math.round((h[k].percent - b[k].percent) * 100) / 100])) as CoverageDiff["delta"];
+    Object.fromEntries(keys.filter((k) => b[k] && h[k]).map((k) => [k, Math.round((h[k]!.percent - b[k]!.percent) * 100) / 100])) as CoverageDiff["delta"];
   const delta = deltaOf(base.summary, head.summary);
   const shared = Object.keys(head.subgraphs ?? {}).filter((n) => base.subgraphs?.[n]);
   const subgraphs = shared.length ? Object.fromEntries(shared.map((n) => [n, deltaOf(base.subgraphs![n], head.subgraphs![n])])) : undefined;
@@ -77,7 +77,7 @@ export function gate(report: CoverageReport, options: GateOptions): GateResult {
       const tol = options.tolerance ?? 0;
       for (const [k, v] of Object.entries(delta)) {
         if (UNGATED_SUMMARY_KEYS.includes(k as keyof CoverageSummary)) continue;
-        if (v < -tol) failures.push(`${label}${k} coverage dropped by ${Math.abs(v)} points (${baseSummary[k as keyof CoverageSummary].percent}% to ${s[k as keyof CoverageSummary].percent}%)`);
+        if (v < -tol) failures.push(`${label}${k} coverage dropped by ${Math.abs(v)} points (${baseSummary[k as keyof CoverageSummary]!.percent}% to ${s[k as keyof CoverageSummary]!.percent}%)`);
       }
     }
   }
@@ -134,18 +134,26 @@ function pathInSubgraphs(report: CoverageReport, path: string, subgraphs: string
   return el.graphs?.some((g) => subgraphs.includes(g)) ?? false;
 }
 
-/** Uncovered elements, grouped, for the "what to test next" list. */
-export function uncovered(report: CoverageReport): { fields: string[]; arguments: string[]; inputFields: string[]; enumValues: string[] } {
-  const out = { fields: [] as string[], arguments: [] as string[], inputFields: [] as string[], enumValues: [] as string[] };
+/**
+ * Uncovered elements, grouped, for the "what to test next" list. With response data it also lists requested fields
+ * that never came back with a value, and possible types of interfaces and unions that never came back ("Node.Club").
+ */
+export function uncovered(report: CoverageReport): { fields: string[]; arguments: string[]; inputFields: string[]; enumValues: string[]; neverReturned: string[]; possibleTypes: string[] } {
+  const out = { fields: [] as string[], arguments: [] as string[], inputFields: [] as string[], enumValues: [] as string[], neverReturned: [] as string[], possibleTypes: [] as string[] };
   for (const [tn, t] of Object.entries(report.types))
     for (const [fn, f] of Object.entries(t.fields)) {
       if (f.hits === 0) out.fields.push(`${tn}.${fn}`);
+      else if (f.returned && f.returned.value === 0) out.neverReturned.push(`${tn}.${fn}`);
       for (const [an, a] of Object.entries(f.args)) if (a.hits === 0) out.arguments.push(`${tn}.${fn}(${an})`);
     }
   for (const [tn, t] of Object.entries(report.inputTypes)) for (const [fn, f] of Object.entries(t.fields)) if (f.sent === 0) out.inputFields.push(`${tn}.${fn}`);
   for (const [en, e] of Object.entries(report.enums)) {
     if (e.input === false) continue; // output-only: nothing a test can send
     for (const [vn, v] of Object.entries(e.values)) if (v.hits === 0) out.enumValues.push(`${en}.${vn}`);
+  }
+  for (const [an, a] of Object.entries(report.abstractTypes ?? {})) {
+    if (!a.seen) continue;
+    for (const [tn, n] of Object.entries(a.possible)) if (n === 0) out.possibleTypes.push(`${an}.${tn}`);
   }
   for (const k of Object.keys(out) as (keyof typeof out)[]) out[k].sort();
   return out;
