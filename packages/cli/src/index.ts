@@ -1,10 +1,10 @@
 import { Command } from "commander";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { computeCoverage, diffReports, gate, mergeReports, parsePersistedManifest, parseUsage, readCaptures, testCoverage, uncovered, toIstanbul, toLcov, DEFAULT_CAPTURE_DIR, type CoverageReport } from "@gqlcov/core";
+import { computeCoverage, diffReports, fmtRequests, gate, mergeReports, parsePersistedManifest, parseUsage, readCaptures, testCoverage, toMarkdown, uncovered, toIstanbul, toLcov, DEFAULT_CAPTURE_DIR, type CoverageReport } from "@gqlcov/core";
 import { renderHtml } from "./html.js";
-import { fmtRequests } from "./format.js";
 import { isRemotePointer as isRemote, loadSchema } from "./schema-source.js";
+import { upsertPrComment } from "./github.js";
 import { fetchApolloUsage, fetchCosmoUsage } from "./registry.js";
 
 const { version } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
@@ -160,6 +160,32 @@ export function buildCli(): Command {
     });
 
   program
+    .command("markdown")
+    .description("Markdown summary for a pull request comment or job summary; with --base, the change and what was lost")
+    .argument("<report>", "report JSON")
+    .option("--base <report>", "base report to compare against (a missing file is ignored, for the first run)")
+    .option("-o, --out <file>", "write to a file instead of printing")
+    .action((reportPath: string, o) => {
+      const base = o.base && existsSync(o.base) ? readReport(o.base) : undefined;
+      const md = toMarkdown(readReport(reportPath), base);
+      if (o.out) writeOut(o.out, md);
+      else console.log(md);
+    });
+
+  program
+    .command("comment")
+    .description("Create or update gqlcov's comment on the current pull request (GitHub Actions)")
+    .argument("<file>", "Markdown file, e.g. from gqlcov markdown")
+    .option("--id <name>", "keep a separate comment per id, for several reports on one pull request")
+    .option("--token <token>", "GitHub token (default GITHUB_TOKEN)")
+    .option("--repo <owner/name>", "repository (default GITHUB_REPOSITORY)")
+    .option("--pr <number>", "pull request number (default: from the GitHub Actions event)", (v: string) => parseInt(v, 10))
+    .action(async (file: string, o) => {
+      const r = await upsertPrComment({ body: readFileSync(file, "utf8"), id: o.id, token: o.token, repo: o.repo, pr: o.pr });
+      console.log(r.action === "skipped" ? `gqlcov: comment skipped: ${r.reason}` : `gqlcov: comment ${r.action}: ${r.url}`);
+    });
+
+  program
     .command("tests")
     .description("Coverage per test, from the source label each capture carries")
     .argument("<report>", "report JSON")
@@ -227,17 +253,19 @@ export function buildCli(): Command {
     .option("--min-fields <pct>", "minimum output-field coverage", parseFloat)
     .option("--min-input-fields <pct>", "minimum input-field coverage", parseFloat)
     .option("--min-enum-values <pct>", "minimum coverage of enum values sent as input", parseFloat)
-    .option("--base <report>", "fail on any decrease versus this report")
+    .option("--base <report>", "fail on any decrease versus this report (a missing file skips this check, for the first run)")
     .option("--tolerance <points>", "allowed decrease in percentage points", parseFloat, 0)
     .option("--subgraph <name...>", "apply the thresholds to these subgraphs instead of the whole schema; * for every subgraph")
     .option("--min-used-fields <pct>", "minimum share of fields with production traffic that are tested (report needs --usage)", parseFloat)
     .action((reportPath: string, o) => {
       const report = readReport(reportPath);
+      const baseMissing = o.base !== undefined && !existsSync(o.base);
+      if (baseMissing) console.log(`  base report ${o.base} not found: skipping the no-decrease check`);
       const result = gate(report, {
         minFields: o.minFields,
         minInputFields: o.minInputFields,
         minEnumValues: o.minEnumValues,
-        base: o.base ? readReport(o.base) : undefined,
+        base: o.base && !baseMissing ? readReport(o.base) : undefined,
         tolerance: o.tolerance,
         subgraphs: o.subgraph,
         minUsedFields: o.minUsedFields,

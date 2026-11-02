@@ -1,0 +1,75 @@
+name: gqlcov
+description: GraphQL schema coverage on pull requests, as a job summary and one comment that each run updates.
+author: Michael Mattan
+branding:
+  icon: check-circle
+  color: green
+
+inputs:
+  report:
+    description: Report JSON written by gqlcov report.
+    default: .gqlcov/report.json
+  base:
+    description: Report JSON from the base branch to compare against. Optional; a missing file is ignored, so the first run works.
+    default: ""
+  comment:
+    description: Create or update a comment on the pull request ("true" or "false"). Needs pull-requests write permission.
+    default: "true"
+  summary:
+    description: Write the summary to the job summary page ("true" or "false").
+    default: "true"
+  id:
+    description: Keep a separate comment per id, for several reports on one pull request (a monorepo, for instance).
+    default: ""
+  token:
+    description: Token used to write the comment.
+    default: ${{ github.token }}
+  version:
+    description: "@gqlcov/cli version to run. Default: the Action's own tag when it is vX.Y.Z, otherwise latest."
+    default: ""
+  cli:
+    description: Command that runs gqlcov, instead of npx (for example node packages/cli/dist/bin.js).
+    default: ""
+
+outputs:
+  markdown:
+    description: Path of the Markdown summary.
+    value: ${{ steps.gqlcov.outputs.markdown }}
+
+runs:
+  using: composite
+  steps:
+    - id: gqlcov
+      shell: bash
+      env:
+        INPUT_REPORT: ${{ inputs.report }}
+        INPUT_BASE: ${{ inputs.base }}
+        INPUT_COMMENT: ${{ inputs.comment }}
+        INPUT_SUMMARY: ${{ inputs.summary }}
+        INPUT_ID: ${{ inputs.id }}
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_CLI: ${{ inputs.cli }}
+        ACTION_REF: ${{ github.action_ref }}
+        GITHUB_TOKEN: ${{ inputs.token }}
+      run: |
+        set -euo pipefail
+        if [ -n "$INPUT_CLI" ]; then
+          read -r -a gqlcov <<< "$INPUT_CLI"
+        else
+          version="$INPUT_VERSION"
+          if [ -z "$version" ]; then
+            case "$ACTION_REF" in v[0-9]*) version="${ACTION_REF#v}" ;; *) version=latest ;; esac
+          fi
+          gqlcov=(npx --yes "@gqlcov/cli@$version")
+        fi
+        out="${RUNNER_TEMP:-/tmp}/gqlcov-summary.md"
+        args=("$INPUT_REPORT" -o "$out")
+        if [ -n "$INPUT_BASE" ]; then args+=(--base "$INPUT_BASE"); fi
+        "${gqlcov[@]}" markdown "${args[@]}"
+        echo "markdown=$out" >> "$GITHUB_OUTPUT"
+        if [ "$INPUT_SUMMARY" = "true" ]; then cat "$out" >> "$GITHUB_STEP_SUMMARY"; fi
+        if [ "$INPUT_COMMENT" = "true" ]; then
+          comment=(comment "$out")
+          if [ -n "$INPUT_ID" ]; then comment+=(--id "$INPUT_ID"); fi
+          "${gqlcov[@]}" "${comment[@]}"
+        fi

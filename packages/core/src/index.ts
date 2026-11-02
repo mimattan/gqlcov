@@ -13,3 +13,4 @@ export { subgraphsFromSupergraph, subgraphsFromSdls, attributeSubgraphs, summari
 export { isFederationInternal } from "./federation.js";
 export { applyUsage, parseUsage, summariseUsage } from "./usage.js";
 export { parsePersistedManifest, mergePersistedManifests, resolvePersisted, type PersistedManifest } from "./persisted.js";
+export { toMarkdown, fmtRequests } from "./markdown.js";

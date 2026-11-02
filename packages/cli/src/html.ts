@@ -1,6 +1,5 @@
 import { getNamedType, isListType, isNonNullType, isObjectType, type GraphQLObjectType, type GraphQLSchema } from "graphql";
-import { testCoverage, type CoverageReport, type EnumValueCoverage, type Ratio } from "@gqlcov/core";
-import { fmtRequests } from "./format.js";
+import { fmtRequests, testCoverage, type CoverageReport, type EnumValueCoverage, type Ratio } from "@gqlcov/core";
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const pct = (c: number, t: number) => (t === 0 ? 100 : Math.round((c / t) * 1000) / 10);

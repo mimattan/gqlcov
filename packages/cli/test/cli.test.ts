@@ -6,7 +6,6 @@ import { join } from "node:path";
 import { buildSchema, getIntrospectionQuery, graphqlSync } from "graphql";
 import { writeCapture, type CoverageReport } from "@gqlcov/core";
 import { buildCli } from "../src/index.js";
-import { fmtRequests } from "../src/format.js";
 
 const sdl = /* GraphQL */ `
 enum Surface { CLAY HARD }
@@ -42,6 +41,10 @@ function startServer(): Promise<void> {
         return send(200, graphqlSync({ schema, source: json.query }));
       }
       if (req.url === "/no-introspection") return send(200, { errors: [{ message: "introspection is disabled" }] });
+      if (req.url!.startsWith("/gh/")) {
+        if (req.method === "GET") return send(200, []);
+        return send(201, { html_url: `https://github.com/o/r/pull/7#${json.body.length}` });
+      }
       if (req.url === "/apollo") {
         if (json.query.includes("GqlcovFieldUsage"))
           return send(200, { data: { graph: { variant: { schemaCoordinateInsightsUsageReport: { records: [{ namedType: "Query", namedAttribute: "clubs", referencingOperationCount: 120000, estimatedExecutionCount: 9, used: true }] } } } } });
@@ -84,7 +87,7 @@ beforeAll(async () => {
 afterAll(() => new Promise<void>((r) => server.close(() => r())));
 afterEach(() => {
   process.exitCode = undefined;
-  for (const k of ["APOLLO_KEY", "APOLLO_REGISTRY_URL", "COSMO_API_KEY", "COSMO_API_URL", "GITHUB_SHA", "GITHUB_REF_NAME"]) {
+  for (const k of ["APOLLO_KEY", "APOLLO_REGISTRY_URL", "COSMO_API_KEY", "COSMO_API_URL", "GITHUB_SHA", "GITHUB_REF_NAME", "GITHUB_API_URL", "GITHUB_EVENT_PATH"]) {
     if (saved[k] === undefined) delete process.env[k];
     else process.env[k] = saved[k];
   }
@@ -238,6 +241,30 @@ describe("gqlcov tests", () => {
   });
 });
 
+describe("gqlcov markdown and comment", () => {
+  let head: string;
+  let base: string;
+  beforeAll(async () => {
+    await cli("report", "-q", "-s", at("schema.graphql"), "-c", at("captures"), "-o", (head = at("md", "head.json")));
+    await cli("report", "-q", "-s", at("schema.graphql"), "-c", at("empty"), "-o", (base = at("md", "base.json")));
+  });
+
+  it("prints a summary, or a comparison when the base report exists", async () => {
+    expect((await cli("markdown", head)).out).toContain("| Metric | Coverage | Covered |");
+    expect((await cli("markdown", head, "--base", at("md", "missing.json"))).out).toContain("| Metric | Coverage | Covered |");
+    await cli("markdown", head, "--base", base, "-o", at("md", "out.md"));
+    expect(readFileSync(at("md", "out.md"), "utf8")).toContain("<summary>Newly covered (");
+  });
+
+  it("posts the summary as a pull request comment, or says why it did not", async () => {
+    process.env.GITHUB_API_URL = `http://127.0.0.1:${(server.address() as { port: number }).port}/gh`;
+    const posted = await cli("comment", at("md", "out.md"), "--token", "t", "--repo", "o/r", "--pr", "7", "--id", "api");
+    expect(posted.out).toMatch(/^gqlcov: comment created: https:\/\/github.com\/o\/r\/pull\/7#\d+$/);
+    delete process.env.GITHUB_EVENT_PATH;
+    expect((await cli("comment", at("md", "out.md"), "--token", "t", "--repo", "o/r")).out).toBe("gqlcov: comment skipped: not a pull request");
+  });
+});
+
 describe("gqlcov merge, diff and gate", () => {
   let fullPath: string;
   let shortPath: string;
@@ -281,6 +308,9 @@ describe("gqlcov merge, diff and gate", () => {
     const used = await cli("gate", fullPath, "--min-used-fields", "99");
     expect(used.err).toMatch(/of fields with production traffic are tested/);
     expect((await cli("gate", fullPath)).out).toContain("gate: passed");
+    const firstRun = await cli("gate", fullPath, "--base", at("g", "no-base-yet.json"));
+    expect(firstRun.out).toContain(`base report ${at("g", "no-base-yet.json")} not found: skipping the no-decrease check`);
+    expect(firstRun.code).toBe(0);
   });
 
   it("prints older reports without the observed or usage numbers", async () => {
@@ -294,8 +324,3 @@ describe("gqlcov merge, diff and gate", () => {
   });
 });
 
-describe("request counts", () => {
-  it("formats plain numbers, thousands and millions", () => {
-    expect([fmtRequests(950), fmtRequests(9999), fmtRequests(15_400), fmtRequests(2_460_000)]).toEqual(["950", "9999", "15k", "2.5M"]);
-  });
-});
