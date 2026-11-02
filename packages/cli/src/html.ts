@@ -158,6 +158,15 @@ function testsSection(report: CoverageReport): string {
   return `<section class="tests"><h2>Tests <span class="h2-note">${list.length}</span></h2><p class="hint">From the source label on each capture. "Only here" lists what no other test covers; type a test name in the filter to see everything it touches.</p>${rows.join("")}</section>`;
 }
 
+function invalidSection(report: CoverageReport): string {
+  const list = report.invalid ?? [];
+  if (!list.length) return "";
+  const items = list
+    .map((x) => `<li class="off"><span class="fname">${esc(x.operationName ?? "(anonymous)")}${x.sources.length ? `<small class="src">${esc(x.sources.join(", "))}</small>` : ""}<small class="err">${x.errors.map(esc).join("<br>")}</small></span><span class="hits">${x.count}×</span></li>`)
+    .join("");
+  return `<section class="invalid"><h2>Operations that do not validate <span class="h2-note">${report.operations.invalid}</span></h2><p class="hint">These captures were not counted. A test sends a query the schema no longer accepts: the test or its fixture has drifted from the schema.</p><div class="row risk-box"><ul class="fields">${items}</ul></div></section>`;
+}
+
 function subgraphTable(report: CoverageReport): string {
   const names = Object.keys(report.subgraphs ?? {});
   if (!names.length) return "";
@@ -224,7 +233,7 @@ body.only-gaps .row.full:not(.aux),body.only-gaps li.on{display:none}
 .hidden{display:none!important}
 .empty{color:var(--ink2);font-size:14px;padding:12px 0}
 .prod{display:inline-block;margin-right:10px;padding:1px 7px;border-radius:10px;background:var(--track);color:var(--ink2);font-size:11.5px}.prod.risk{background:var(--low);color:#fff}
-.usage{margin-bottom:28px}.risk-box{padding:0}.risk-head{padding:10px 14px;font-weight:550}.risk-box .fields{border-top:1px solid var(--line)}
+.usage,.invalid{margin-bottom:28px}.invalid .fname small{display:block;font-family:inherit}.invalid .src{color:var(--ink2)}.invalid .err{color:var(--low);white-space:normal}.risk-box{padding:0}.risk-head{padding:10px 14px;font-weight:550}.risk-box .fields{border-top:1px solid var(--line)}
 .noval{display:inline-block;margin-right:10px;padding:1px 7px;border-radius:10px;background:var(--half-bg);color:var(--mid);font-size:11.5px}
 .by{display:inline-block;margin-right:10px;color:var(--accent);font-size:11.5px;max-width:220px;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom}
 .tests .row.redundant .rname{color:var(--ink2)}
@@ -255,6 +264,7 @@ ${report.usage ? ledger("Production fields tested", report.usage.usedFields, "fi
 ${report.usage?.usedInputs ? ledger("Production inputs sent by a test", report.usage.usedInputs, "input fields and enum values with production traffic that a test sent") : ""}
 </div>
 ${usageSection(report)}
+${invalidSection(report)}
 
 ${subgraphTable(report)}
 <div class="toolbar"><input type="search" id="q" placeholder="Filter types, fields, values, tests…" aria-label="Filter">${subgraphNames.length ? `<select id="sg" aria-label="Subgraph"><option value="">All subgraphs</option>${subgraphNames.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join("")}</select>` : ""}<label><input type="checkbox" id="gaps"> uncovered only</label><button type="button" id="expand">Expand all</button><button type="button" id="collapse">Collapse</button></div>

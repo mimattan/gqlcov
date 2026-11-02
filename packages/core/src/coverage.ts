@@ -29,6 +29,7 @@ import { Excluder } from "./exclude.js";
 import { schemaHash, toSchema } from "./schema.js";
 import { attributeSubgraphs, subgraphsFromSdls, subgraphsFromSupergraph } from "./subgraphs.js";
 import { applyUsage } from "./usage.js";
+import { addInvalid } from "./invalid.js";
 import { resolvePersisted, type PersistedManifest } from "./persisted.js";
 import type {
   AbstractTypeCoverage,
@@ -283,24 +284,30 @@ export interface RecordResult {
   errors: string[];
 }
 
+/** The first operation name in a document's text, for documents that do not parse. */
+function operationNameOf(document: string): string | null {
+  return /\b(?:query|mutation|subscription)\s+([_A-Za-z][_0-9A-Za-z]*)/.exec(document)?.[1] ?? null;
+}
+
 /** Record one captured operation into an existing report. */
 export function recordOperation(report: CoverageReport, schema: GraphQLSchema, op: CapturedOperation): RecordResult {
   if (!op.document) {
     report.operations.unresolved = (report.operations.unresolved ?? 0) + 1;
     return { valid: false, errors: [op.persistedId ? `persisted document ${op.persistedId} not resolved: give its manifest` : "capture has no document"] };
   }
+  const invalid = (errors: string[]): RecordResult => {
+    report.operations.invalid++;
+    addInvalid(report, { operationName: op.operationName ?? operationNameOf(op.document!), errors, count: 1, sources: op.source ? [op.source] : [] });
+    return { valid: false, errors };
+  };
   let doc;
   try {
     doc = parse(op.document);
   } catch (e) {
-    report.operations.invalid++;
-    return { valid: false, errors: [String((e as Error).message)] };
+    return invalid([String((e as Error).message)]);
   }
   const errors = validate(schema, doc);
-  if (errors.length > 0) {
-    report.operations.invalid++;
-    return { valid: false, errors: errors.map((e) => e.message) };
-  }
+  if (errors.length > 0) return invalid(errors.map((e) => e.message));
 
   const variables = op.variables ?? {};
   const typeInfo = new TypeInfo(schema);

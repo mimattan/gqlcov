@@ -48,6 +48,17 @@ function printUsage(r: CoverageReport): void {
   if (u.unknown.length) console.log(`  in usage but not in the schema (${u.unknown.length}): ${u.unknown.slice(0, 10).join(", ")}${u.unknown.length > 10 ? ", ..." : ""}`);
 }
 
+function printInvalid(r: CoverageReport): void {
+  const list = r.invalid ?? [];
+  if (!list.length) return;
+  console.log(`\n  operations that do not validate against the schema (${r.operations.invalid}):`);
+  for (const x of list.slice(0, 20)) {
+    console.log(`    ${x.operationName ?? "(anonymous)"}${x.count > 1 ? ` (${x.count}x)` : ""}${x.sources.length ? ` from ${x.sources.join(", ")}` : ""}`);
+    for (const e of x.errors.slice(0, 3)) console.log(`      ${e}`);
+  }
+  if (list.length > 20) console.log(`    ... and ${list.length - 20} more`);
+}
+
 function printSubgraphs(r: CoverageReport): void {
   const names = Object.keys(r.subgraphs ?? {});
   if (!names.length) return;
@@ -124,6 +135,7 @@ export function buildCli(): Command {
         if (isRemote(o.schema)) console.log(`gqlcov: schema from ${loaded.label}${loaded.subgraphSdls ? `, ${Object.keys(loaded.subgraphSdls).length} subgraphs` : ""}`);
         printSummary(report);
         printUsage(report);
+        printInvalid(report);
         if (ops.length === 0) console.log(`  (no captures found in ${o.captures.join(", ")})`);
         if (report.operations.unresolved) console.log(`  ${report.operations.unresolved} captures carried only a persisted id: pass the manifest with --persisted, or the capture layer's manifest option`);
         console.log(`  report: ${o.out}${o.html ? `, html: ${o.html}` : ""}${o.lcov ? `, lcov: ${o.lcov}` : ""}${o.istanbul ? `, istanbul: ${o.istanbul}` : ""}`);
@@ -264,6 +276,7 @@ export function buildCli(): Command {
     .option("--min-used-fields <pct>", "minimum share of fields with production traffic that are tested (report needs --usage)", parseFloat)
     .option("--require <pattern...>", "every element matching these patterns must be covered, e.g. 'Mutation.*' 'Query.payment*' (same syntax as --exclude)")
     .option("--min-used-inputs <pct>", "minimum share of input fields and enum values with production traffic that a test sent (usage must cover inputs)", parseFloat)
+    .option("--max-invalid <n>", "maximum captured operations that do not validate against the schema (0: any stale test query fails)", (v: string) => parseInt(v, 10))
     .action((reportPath: string, o) => {
       const report = readReport(reportPath);
       const baseMissing = o.base !== undefined && !existsSync(o.base);
@@ -278,6 +291,7 @@ export function buildCli(): Command {
         minUsedFields: o.minUsedFields,
         minUsedInputs: o.minUsedInputs,
         require: o.require,
+        maxInvalid: o.maxInvalid,
       });
       printSummary(report);
       if (result.passed) return console.log("  gate: passed");

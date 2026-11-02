@@ -3,6 +3,7 @@ import { summariseSubgraphs } from "./subgraphs.js";
 import { summariseUsage } from "./usage.js";
 import type { CoverageReport } from "./types.js";
 import { addValueClasses } from "./values.js";
+import { addInvalid } from "./invalid.js";
 
 /** Merge reports from parallel shards. All reports must share a schema hash. */
 export function mergeReports(reports: CoverageReport[]): CoverageReport {
@@ -73,6 +74,7 @@ export function mergeReports(reports: CoverageReport[]): CoverageReport {
         ov.observed = (ov.observed ?? 0) + (v.observed ?? 0);
       }
     }
+    for (const x of r.invalid ?? []) addInvalid(out, x);
     for (const [k, v] of Object.entries(r.argumentValues)) if (out.argumentValues[k]) out.argumentValues[k] = addValueClasses(out.argumentValues[k], v);
   }
   out.summary = summarise(out);

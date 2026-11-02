@@ -40,6 +40,14 @@ describe("renderHtml", () => {
     for (const label of ["Output fields", "Arguments", "Input fields", "Optional input fields, both states", "Enum values", "Enum values in responses", "Types", "Production fields tested"]) expect(html).toContain(`<span class="ledger-label">${label}<small>`);
   });
 
+  it("lists operations that do not validate, with their errors", () => {
+    const section = between(html, `<section class="invalid">`, "</section>");
+    expect(section).toContain(`<span class="fname">(anonymous)<small class="err">Cannot query field &quot;nope&quot; on type &quot;Query&quot;. Did you mean &quot;node&quot;?</small></span><span class="hits">1×</span>`);
+    const sourced = renderHtml(computeCoverage(schema, [{ document: `query Old { nope }`, source: "a.spec" }]), schema);
+    expect(sourced).toContain(`<span class="fname">Old<small class="src">a.spec</small>`);
+    expect(renderHtml(computeCoverage(schema, []), schema)).not.toContain(`<section class="invalid">`);
+  });
+
   it("groups namespace root fields, keeps the rest as direct fields, and skips excluded root fields", () => {
     const query = between(html, "<h2>Query", "</section>");
     expect(query).toContain("Grouped by namespace");

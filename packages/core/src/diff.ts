@@ -103,6 +103,10 @@ export function gate(report: CoverageReport, options: GateOptions): GateResult {
     const missing = matched.filter(([, covered]) => !covered).map(([p]) => p);
     if (missing.length) failures.push(`required "${pattern}": ${missing.length} of ${matched.length} not covered: ${missing.slice(0, 20).join(", ")}${missing.length > 20 ? ` and ${missing.length - 20} more` : ""}`);
   }
+  if (options.maxInvalid !== undefined && report.operations.invalid > options.maxInvalid) {
+    const names = (report.invalid ?? []).map((x) => `${x.operationName ?? "(anonymous)"}: ${x.errors[0]}`);
+    failures.push(`${report.operations.invalid} captured operations do not validate against the schema, above the maximum ${options.maxInvalid}${names.length ? ` (${names.slice(0, 5).join("; ")}${names.length > 5 ? "; ..." : ""})` : ""}`);
+  }
   if (d && d.lostCoverage.length > 0) {
     const inScope = options.subgraphs?.length ? d.lostCoverage.filter((p) => pathInSubgraphs(report, p, options.subgraphs!)) : d.lostCoverage;
     if (inScope.length > 0) failures.push(`lost coverage on: ${inScope.slice(0, 20).join(", ")}${inScope.length > 20 ? ` and ${inScope.length - 20} more` : ""}`);

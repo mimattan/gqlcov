@@ -178,6 +178,17 @@ export interface OperationStats {
   responses?: number;
 }
 
+/** A document that failed to parse or validate, grouped by operation name and errors. */
+export interface InvalidOperation {
+  operationName: string | null;
+  /** Parse or validation messages, as graphql-js reports them. */
+  errors: string[];
+  /** How many captures had this name and these errors. */
+  count: number;
+  /** Capture `source` labels, deduplicated, at most 10. */
+  sources: string[];
+}
+
 export interface CoverageReport {
   version: 1;
   generatedAt: string;
@@ -199,6 +210,8 @@ export interface CoverageReport {
   tests?: Record<string, number>;
   /** Interfaces and unions with their possible types. Absent in older reports. */
   abstractTypes?: Record<string, AbstractTypeCoverage>;
+  /** Captures whose document did not parse or validate against the schema; present when there were any. */
+  invalid?: InvalidOperation[];
 }
 
 /** What one test covered, from the `tests` lists on each element. Paths as in `uncovered`. */
@@ -283,6 +296,8 @@ export interface GateOptions {
    * element must be covered. A pattern that matches nothing fails too, so a typo cannot pass silently.
    */
   require?: string[];
+  /** Maximum number of captured documents that failed to parse or validate against the schema. */
+  maxInvalid?: number;
 }
 
 export interface GateResult {

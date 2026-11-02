@@ -132,6 +132,7 @@ describe("gqlcov report", () => {
     expect(r.out).toContain("1 captures carried only a persisted id");
     expect(r.out).toMatch(/Fields returning a value \(not gated\)\s+100%  \(2\/2\)/);
     expect(r.out).not.toContain("Possible types returned"); // no interface or union came back: nothing to count
+    expect(r.out).toContain(`operations that do not validate against the schema (1):\n    (anonymous)\n      Cannot query field "nope" on type "Query".`);
     expect(r.out).toMatch(/\n  fields \(\d+\):\n    /);
     expect(r.out).toMatch(/\n  input fields \(\d+\):\n    /);
     const report = readJson(at("full", "report.json"));
@@ -194,6 +195,18 @@ describe("gqlcov report", () => {
     expect(r.out).toContain("used in production, never tested (30):");
     expect(r.out).toContain("    ... and 5 more");
     expect(r.out).toContain("  in usage but not in the schema (1): Query.removed\n");
+  });
+
+  it("lists invalid operations with counts and sources, and shortens a long list", async () => {
+    const caps = at("invalid-caps");
+    for (let i = 0; i < 22; i++) writeCapture(caps, { document: `query Stale${i} { gone${i} }`, source: "stale.spec" });
+    writeCapture(caps, { document: `query Stale0 { gone0 }`, source: "other.spec" });
+    const r = await cli("report", "-s", at("schema.graphql"), "-c", caps, "-o", at("invalid", "report.json"));
+    expect(r.out).toContain("operations that do not validate against the schema (23):\n    Stale0 (2x) from stale.spec, other.spec\n");
+    expect(r.out).toContain("    ... and 2 more");
+    const gated = await cli("gate", at("invalid", "report.json"), "--max-invalid", "0");
+    expect(gated.code).toBe(1);
+    expect(gated.err).toContain("23 captured operations do not validate against the schema, above the maximum 0");
   });
 
   it("rejects a malformed --subgraph", async () => {

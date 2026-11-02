@@ -212,7 +212,7 @@ gqlcov markdown <report> [--base report.json] [-o summary.md]
 gqlcov comment <summary.md> [--id name] [--token t] [--repo owner/name] [--pr n]
 gqlcov merge   <report>... -o merged.json          # parallel shards
 gqlcov diff    <base> <head> [--json]
-gqlcov gate    <report> [--min-fields n] [--min-input-fields n] [--min-enum-values n] [--base report.json] [--tolerance points] [--subgraph name...|'*'] [--min-used-fields n] [--min-used-inputs n] [--require pattern...]       # a missing --base file skips the no-decrease check
+gqlcov gate    <report> [--min-fields n] [--min-input-fields n] [--min-enum-values n] [--base report.json] [--tolerance points] [--subgraph name...|'*'] [--min-used-fields n] [--min-used-inputs n] [--require pattern...] [--max-invalid n]       # a missing --base file skips the no-decrease check
 ```
 
 `gate --require` takes the same patterns and fails when any element they match is uncovered, which says "every mutation has a test" more directly than a percentage: `gqlcov gate .gqlcov/report.json --require "Mutation.*" "Query.payment*" "PaymentInput.*"`. A pattern that matches nothing fails too, so a typo cannot pass. Values of output-only enums count as covered once a response returned them.
@@ -272,6 +272,14 @@ gqlcov comment summary.md                 # GITHUB_TOKEN, GITHUB_REPOSITORY and 
 ```
 
 Codecov and friends still work alongside: upload `.gqlcov/lcov.info` (see above). For sharded suites, run `gqlcov merge` in a final job before the Action.
+
+## Stale test queries
+
+A captured document that no longer parses or validates against the schema is not counted toward coverage. It usually means a test or a fixture has drifted from the schema: a field was renamed or removed and the test kept sending the old query (against a mock, it may even still pass). gqlcov lists each one with its operation name, the validation errors, how often it was seen and the `source` labels of the tests that sent it, in the console, the HTML report and `report.invalid` in the JSON. Fail CI on them with:
+
+```sh
+gqlcov gate .gqlcov/report.json --max-invalid 0
+```
 
 ## How coverage is computed
 
