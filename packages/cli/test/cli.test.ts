@@ -132,6 +132,7 @@ describe("gqlcov report", () => {
     expect(r.out).toContain("1 captures carried only a persisted id");
     expect(r.out).toMatch(/Fields returning a value \(not gated\)\s+100%  \(2\/2\)/);
     expect(r.out).not.toContain("Possible types returned"); // no interface or union came back: nothing to count
+    expect(r.out).toContain(`operations that do not validate against the schema (1):\n    (anonymous)\n      Cannot query field "nope" on type "Query".`);
     expect(r.out).toMatch(/\n  fields \(\d+\):\n    /);
     expect(r.out).toMatch(/\n  input fields \(\d+\):\n    /);
     const report = readJson(at("full", "report.json"));
@@ -194,6 +195,40 @@ describe("gqlcov report", () => {
     expect(r.out).toContain("used in production, never tested (30):");
     expect(r.out).toContain("    ... and 5 more");
     expect(r.out).toContain("  in usage but not in the schema (1): Query.removed\n");
+  });
+
+  it("lists invalid operations with counts and sources, and shortens a long list", async () => {
+    const caps = at("invalid-caps");
+    for (let i = 0; i < 22; i++) writeCapture(caps, { document: `query Stale${i} { gone${i} }`, source: "stale.spec" });
+    writeCapture(caps, { document: `query Stale0 { gone0 }`, source: "other.spec" });
+    const r = await cli("report", "-s", at("schema.graphql"), "-c", caps, "-o", at("invalid", "report.json"));
+    expect(r.out).toContain("operations that do not validate against the schema (23):\n    Stale0 (2x) from stale.spec, other.spec\n");
+    expect(r.out).toContain("    ... and 2 more");
+    const gated = await cli("gate", at("invalid", "report.json"), "--max-invalid", "0");
+    expect(gated.code).toBe(1);
+    expect(gated.err).toContain("23 captured operations do not validate against the schema, above the maximum 0");
+  });
+
+  it("lists fields that returned an error with --untested", async () => {
+    writeCapture(at("err-caps"), { document: `{ clubs { id name } }`, responseShape: { clubs: 1, "clubs.id": 1, "clubs.name": 4 } });
+    const r = await cli("report", "-s", at("schema.graphql"), "-c", at("err-caps"), "-o", at("err", "report.json"), "--untested");
+    expect(r.out).toContain("\n  returned an error (1):\n    Club.name");
+  });
+
+  it("prints coverage per identity and gates on identities per field", async () => {
+    const caps = at("id-caps");
+    writeCapture(caps, { document: `mutation { renameClub(id: "1", name: "x") { id } }`, identity: "admin" });
+    writeCapture(caps, { document: `{ clubs { id name } }`, identity: "guest" });
+    writeCapture(caps, { document: `{ clubs { id } }`, identity: "a-very-long-identity" });
+    const r = await cli("report", "-s", at("schema.graphql"), "-c", caps, "-o", at("ids", "report.json"));
+    expect(r.out).toMatch(/\n  Identity\s+Output fields requested\n  a-very-long-identity\s+\d+(\.\d+)?% \(2\/\d+\)\n  admin\s+/);
+    const gated = await cli("gate", at("ids", "report.json"), "--min-identities", "2");
+    expect(gated.err).toContain("1 fields in Mutation.* were requested by fewer than 2 identities: Mutation.renameClub (as admin)");
+    const scoped = await cli("gate", at("ids", "report.json"), "--min-identities", "2", "--identity-scope", "Club.*");
+    expect(scoped.err).toContain("1 fields in Club.* were requested by fewer than 2 identities: Club.name (as guest)");
+    const none = await cli("gate", at("invalid", "report.json"), "--min-identities", "1");
+    expect(none.out).not.toContain("Identity");
+    expect(none.err).toContain("--min-identities needs captures that carry an identity");
   });
 
   it("rejects a malformed --subgraph", async () => {
@@ -314,6 +349,9 @@ describe("gqlcov merge, diff and gate", () => {
     expect(fail.err).toContain("gate: FAILED");
     expect(fail.err).toContain("[clubs] field coverage 0% is below the minimum 10%");
     expect(fail.err).toContain("--min-used-fields needs production usage");
+    const nulls = await cli("gate", fullPath, "--min-input-null", "50");
+    expect(nulls.out).toMatch(/Nullable inputs sent as null\s+0%  \(0\/2\)/);
+    expect(nulls.err).toContain("0% of nullable input fields were sent as null, below the minimum 50%");
     const used = await cli("gate", fullPath, "--min-used-fields", "99");
     expect(used.err).toMatch(/of fields with production traffic are tested/);
     expect((await cli("gate", fullPath)).out).toContain("gate: passed");
@@ -340,11 +378,13 @@ describe("gqlcov merge, diff and gate", () => {
   it("prints older reports without the observed or usage numbers", async () => {
     const legacy = readJson(fullPath) as unknown as Record<string, Record<string, unknown>>;
     delete legacy.summary.enumValuesObserved;
+    delete legacy.summary.inputFieldsNull;
     delete legacy.usage;
     writeFileSync(at("g", "legacy.json"), JSON.stringify(legacy));
     const r = await cli("gate", at("g", "legacy.json"));
     expect(r.out).not.toContain("Enum values in responses");
     expect(r.out).not.toContain("Production fields tested");
+    expect(r.out).not.toContain("Nullable inputs");
   });
 });
 

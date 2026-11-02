@@ -9,6 +9,8 @@ export interface CaptureOptions {
   enabled?: boolean | (() => boolean);
   /** Attach a source label to each capture, e.g. read from a request header set by the test runner. */
   source?: (context: Record<string, unknown>) => string | undefined;
+  /** Who sent the operation, e.g. the role of the authenticated user, so coverage can be split per identity. */
+  identity?: (context: Record<string, unknown>) => string | undefined;
 }
 
 function isEnabled(opt: CaptureOptions["enabled"]): boolean {
@@ -17,39 +19,57 @@ function isEnabled(opt: CaptureOptions["enabled"]): boolean {
   return Boolean(process.env.GQLCOV_CAPTURE) || process.env.NODE_ENV === "test";
 }
 
+interface Args {
+  document: unknown;
+  operationName?: string | null;
+  variableValues?: unknown;
+  contextValue?: unknown;
+}
+
+function save(dir: string, op: CapturedOperation): void {
+  try {
+    writeCapture(dir, op);
+  } catch {
+    // never break the request because of coverage capture
+  }
+}
+
 /**
  * Captures every executed operation (document, operation name, variables, and what the response contained:
  * enum values, field outcomes and concrete types)
- * into one JSON file each. Works with any Envelop-based server, including GraphQL Yoga.
+ * into one JSON file each. Works with any Envelop-based server, including GraphQL Yoga. Subscriptions are
+ * captured once, when the client subscribes, without response data.
  */
 export function useGqlcovCapture(options: CaptureOptions = {}): Plugin {
   const dir = options.dir ?? process.env.GQLCOV_CAPTURE_DIR ?? DEFAULT_CAPTURE_DIR;
+  const base = (args: Args): CapturedOperation => ({
+    document: print(args.document as DocumentNode),
+    operationName: args.operationName ?? null,
+    variables: (args.variableValues as Record<string, unknown> | null) ?? null,
+    source: options.source?.((args.contextValue as Record<string, unknown>) ?? {}),
+    identity: options.identity?.((args.contextValue as Record<string, unknown>) ?? {}),
+  });
   return {
+    onSubscribe({ args }) {
+      if (isEnabled(options.enabled)) save(dir, base(args));
+    },
     onExecute({ args }) {
       if (!isEnabled(options.enabled)) return;
-      const op: CapturedOperation = {
-        document: print(args.document as DocumentNode),
-        operationName: args.operationName ?? null,
-        variables: (args.variableValues as Record<string, unknown> | null) ?? null,
-        source: options.source?.((args.contextValue as Record<string, unknown>) ?? {}),
-      };
+      const op = base(args);
       return {
         onExecuteDone({ result }) {
           try {
             // Streamed (incremental) results are captured without response facts.
-            const data = "data" in result ? result.data : undefined;
-            if (data) {
-              const facts = collectResponse(args.schema as GraphQLSchema, args.document as DocumentNode, data, args.operationName);
+            const single = "data" in result || "errors" in result ? result : undefined;
+            // A response whose data is null still says which fields failed, through its errors.
+            if (single && (single.data || single.errors?.length)) {
+              const facts = collectResponse(args.schema as GraphQLSchema, args.document as DocumentNode, single.data, args.operationName, single.errors);
               Object.assign(op, { responseEnums: facts.enums, responseValues: facts.values, responseTypes: facts.types });
             }
           } catch {
             // response walking is best effort
           }
-          try {
-            writeCapture(dir, op);
-          } catch {
-            // never break the request because of coverage capture
-          }
+          save(dir, op);
         },
       };
     },

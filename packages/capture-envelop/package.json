@@ -1,6 +1,6 @@
 {
   "name": "@gqlcov/capture-envelop",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "description": "Envelop / GraphQL Yoga plugin that writes every executed operation to a capture folder for gqlcov.",
   "license": "MIT",
   "author": "Michael Mattan",
@@ -45,7 +45,7 @@
     "build": "tsc -b"
   },
   "dependencies": {
-    "@gqlcov/core": "0.3.2"
+    "@gqlcov/core": "0.4.0"
   },
   "peerDependencies": {
     "@envelop/core": ">=4",

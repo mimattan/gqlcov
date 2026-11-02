@@ -37,7 +37,50 @@ describe("renderHtml", () => {
   it("shows run metadata, operation counts and every ledger number", () => {
     expect(html).toContain("main &nbsp;/&nbsp; commit 0123456789 &nbsp;/&nbsp; schema");
     expect(html).toContain("<b>3</b> operations captured: 1 queries, 2 mutations, 0 subscriptions, <b>1 invalid</b>.");
-    for (const label of ["Output fields", "Arguments", "Input fields", "Optional input fields, both states", "Enum values", "Enum values in responses", "Types", "Production fields tested"]) expect(html).toContain(`<span class="ledger-label">${label}<small>`);
+    for (const label of ["Output fields", "Arguments", "Input fields", "Optional input fields, both states", "Nullable input fields sent as null", "Enum values", "Enum values in responses", "Types", "Production fields tested"]) expect(html).toContain(`<span class="ledger-label">${label}<small>`);
+  });
+
+  it("shows explicit nulls on nullable input fields, and null values in older reports", () => {
+    const inputs = between(html, "<h2>Input types", "</section>");
+    expect(inputs).toMatch(/<span class="fname">note<\/span><span class="hits">.*?sent 1, omitted 1, null 1<\/span>/);
+    expect(inputs).toMatch(/<span class="fname">ok<\/span><span class="hits">(?:(?!<\/li>).)*sent 2, omitted 0, null 0<\/span>/);
+    expect(inputs).toMatch(/<span class="fname">name<span class='req'>!<\/span><\/span><span class="hits">(?:(?!<\/li>).)*sent 2<\/span>/);
+    const legacy = structuredClone(report);
+    const f = legacy.inputTypes.CourtInput.fields;
+    for (const x of Object.values(f)) { delete x.nullable; delete x.nulled; }
+    delete (legacy.summary as Partial<typeof legacy.summary>).inputFieldsNull;
+    const old = renderHtml(legacy, schema);
+    expect(old).toContain(`sent 1, omitted 1, null 1</span>`);
+    expect(old).toMatch(/<span class="fname">ok<\/span><span class="hits">(?:(?!<\/li>).)*sent 2, omitted 0<\/span>/);
+    expect(old).not.toContain("Nullable input fields sent as null");
+  });
+
+  it("badges fields whose response had an error before ones that only came back empty", () => {
+    const page = renderHtml(computeCoverage(schema, [
+      { document: `{ courts { id status name } }`, responseShape: { courts: 1, "courts.id": 4, "courts.status": 8, "courts.name": 1 } },
+    ]), schema);
+    expect(page).toContain(`<span class="fname">id</span><span class="hits"><span class="err-badge" title="operations whose response had an error at this field">error in 1</span>`);
+    expect(page).toContain(`<span class="noval" title="requested, but every response had it as an empty list">always empty</span>`);
+    expect(page).not.toMatch(/<span class="fname">name<\/span><span class="hits"><span class="(?:err-badge|noval)"/);
+  });
+
+  it("shows coverage per identity and tags each field with the identities that requested it", () => {
+    const page = renderHtml(computeCoverage(schema, [
+      { document: `{ courts { id status } }`, identity: "guest" },
+      { document: `{ courts { id } }`, identity: "admin" },
+    ]), schema);
+    expect(between(page, `<section class="identities">`, "</section>")).toContain(`<th scope="row">admin</th>`);
+    expect(page).toContain(`<span class="fname">id</span><span class="hits"><span class="who" title="identities that requested this field">as admin, guest</span>`);
+    expect(page).toContain(`<span class="fname">status</span><span class="hits"><span class="who" title="identities that requested this field">as guest</span>`);
+    expect(html).not.toContain(`<section class="identities">`);
+  });
+
+  it("lists operations that do not validate, with their errors", () => {
+    const section = between(html, `<section class="invalid">`, "</section>");
+    expect(section).toContain(`<span class="fname">(anonymous)<small class="err">Cannot query field &quot;nope&quot; on type &quot;Query&quot;. Did you mean &quot;node&quot;?</small></span><span class="hits">1×</span>`);
+    const sourced = renderHtml(computeCoverage(schema, [{ document: `query Old { nope }`, source: "a.spec" }]), schema);
+    expect(sourced).toContain(`<span class="fname">Old<small class="src">a.spec</small>`);
+    expect(renderHtml(computeCoverage(schema, []), schema)).not.toContain(`<section class="invalid">`);
   });
 
   it("groups namespace root fields, keeps the rest as direct fields, and skips excluded root fields", () => {

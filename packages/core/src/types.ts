@@ -10,16 +10,32 @@ export interface CapturedOperation {
   timestamp?: string;
   /** Free-form origin, e.g. the test file name when the capture layer knows it. */
   source?: string;
+  /** Who sent the operation: a role, user type or test account, e.g. "admin" or "anonymous". */
+  identity?: string;
   /** Enum values that appeared in the response data, by enum name. Server-side capture fills this; wire capture does not. */
   responseEnums?: Record<string, string[]>;
-  /** Per selected field ("ParentType.field"), what came back: a value, null, or an empty list. Server-side capture fills this. */
+  /** Per selected field ("ParentType.field"), what came back: a value, null, an empty list, or an error. Server-side capture fills this. */
   responseValues?: Record<string, ResponseOutcome[]>;
+  /**
+   * What each response path held, for wire capture without a schema (Playwright): bits 1 value, 2 null, 4 error,
+   * 8 empty list, keyed by response keys joined with dots, list indexes dropped. See `collectResponseShape`.
+   */
+  responseShape?: Record<string, number>;
   /** Per interface or union, the concrete types returned (from `__typename`, where selected). Server-side capture fills this. */
   responseTypes?: Record<string, string[]>;
 }
 
+/** Operations whose response had a field as a value, null, an empty list, or an error (a null the response's `errors` point at). */
+export interface ReturnedCounts {
+  value: number;
+  null: number;
+  empty: number;
+  /** Absent in older reports. */
+  error?: number;
+}
+
 /** What a selected field came back as in one response. */
-export type ResponseOutcome = "value" | "null" | "empty";
+export type ResponseOutcome = "value" | "null" | "empty" | "error";
 
 export interface RunInfo {
   id?: string;
@@ -55,7 +71,9 @@ export interface FieldCoverage {
   /** Tests (capture `source` labels) that requested this field, sorted. */
   tests?: string[];
   /** Operations whose response had this field as a value, as null, or as an empty list. Absent without response data. */
-  returned?: Record<ResponseOutcome, number>;
+  returned?: ReturnedCounts;
+  /** Requests per identity, for captures that carried one. */
+  identities?: Record<string, number>;
 }
 
 /** An interface or union, and how often each of its possible types came back. */
@@ -99,6 +117,10 @@ export interface InputFieldCoverage {
   omitted: number;
   deprecated: boolean;
   required: boolean;
+  /** The field's type accepts null (not `!`). Absent in older reports. */
+  nullable?: boolean;
+  /** Times the field was sent as an explicit null. Unlike `values.null`, null items inside a list do not count. Absent in older reports. */
+  nulled?: number;
   values: ValueClasses;
   graphs?: string[];
   /** Tests that sent this field, sorted. */
@@ -150,6 +172,8 @@ export interface CoverageSummary {
   inputFields: Ratio;
   /** Input fields seen both sent and omitted (optional fields only). */
   inputFieldsBothStates: Ratio;
+  /** Nullable input fields seen sent as an explicit null. Absent in older reports. */
+  inputFieldsNull: Ratio;
   /** Values of input-reachable enums sent at least once. */
   enumValues: Ratio;
   /** Values of output enums seen in at least one response. Reported, never gated. */
@@ -178,6 +202,17 @@ export interface OperationStats {
   responses?: number;
 }
 
+/** A document that failed to parse or validate, grouped by operation name and errors. */
+export interface InvalidOperation {
+  operationName: string | null;
+  /** Parse or validation messages, as graphql-js reports them. */
+  errors: string[];
+  /** How many captures had this name and these errors. */
+  count: number;
+  /** Capture `source` labels, deduplicated, at most 10. */
+  sources: string[];
+}
+
 export interface CoverageReport {
   version: 1;
   generatedAt: string;
@@ -199,6 +234,10 @@ export interface CoverageReport {
   tests?: Record<string, number>;
   /** Interfaces and unions with their possible types. Absent in older reports. */
   abstractTypes?: Record<string, AbstractTypeCoverage>;
+  /** Captures whose document did not parse or validate against the schema; present when there were any. */
+  invalid?: InvalidOperation[];
+  /** Output-field coverage per identity; present when captures carried an identity. */
+  identities?: Record<string, Ratio>;
 }
 
 /** What one test covered, from the `tests` lists on each element. Paths as in `uncovered`. */
@@ -267,6 +306,8 @@ export interface GateOptions {
   /** Minimum field coverage percent. */
   minFields?: number;
   minInputFields?: number;
+  /** Minimum percent of nullable input fields seen sent as an explicit null. */
+  minInputNull?: number;
   minEnumValues?: number;
   /** Fail if any summary percent drops versus this report. */
   base?: CoverageReport;
@@ -283,6 +324,12 @@ export interface GateOptions {
    * element must be covered. A pattern that matches nothing fails too, so a typo cannot pass silently.
    */
   require?: string[];
+  /** Maximum number of captured documents that failed to parse or validate against the schema. */
+  maxInvalid?: number;
+  /** Every requested field in `identityScope` must have been requested by at least this many distinct identities. */
+  minIdentities?: number;
+  /** "Type.field" patterns for `minIdentities`. Default ["Mutation.*"]. */
+  identityScope?: string[];
 }
 
 export interface GateResult {

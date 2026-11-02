@@ -28,7 +28,10 @@ import {
 import { Excluder } from "./exclude.js";
 import { schemaHash, toSchema } from "./schema.js";
 import { attributeSubgraphs, subgraphsFromSdls, subgraphsFromSupergraph } from "./subgraphs.js";
+import { shapeToValues } from "./outcomes.js";
+import { summariseIdentities } from "./identities.js";
 import { applyUsage } from "./usage.js";
+import { addInvalid } from "./invalid.js";
 import { resolvePersisted, type PersistedManifest } from "./persisted.js";
 import type {
   AbstractTypeCoverage,
@@ -88,6 +91,8 @@ export function emptyReport(schemaInput: string | object | GraphQLSchema, option
           omitted: 0,
           deprecated: fdep,
           required: isNonNullType(field.type) && field.defaultValue === undefined,
+          nullable: !isNonNullType(field.type),
+          nulled: 0,
           values: emptyValueClasses(),
         };
       }
@@ -170,7 +175,7 @@ function markEnumReachability(
 /** Summarise the report, or only the elements tagged with one subgraph when `graph` is given. */
 export function summarise(r: Pick<CoverageReport, "types" | "inputTypes" | "enums">, graph?: string): CoverageSummary {
   const inGraph = (x: { graphs?: string[] }) => graph === undefined || (x.graphs?.includes(graph) ?? false);
-  let tC = 0, tT = 0, fC = 0, fT = 0, aC = 0, aT = 0, iC = 0, iT = 0, bC = 0, bT = 0, eC = 0, eT = 0, oC = 0, oT = 0;
+  let tC = 0, tT = 0, fC = 0, fT = 0, aC = 0, aT = 0, iC = 0, iT = 0, bC = 0, bT = 0, nC = 0, nT = 0, eC = 0, eT = 0, oC = 0, oT = 0;
   for (const t of Object.values(r.types)) {
     if (inGraph(t)) {
       tT++;
@@ -195,6 +200,11 @@ export function summarise(r: Pick<CoverageReport, "types" | "inputTypes" | "enum
         bT++;
         if (f.sent > 0 && f.omitted > 0) bC++;
       }
+      // Older reports have no `nullable` flag and leave this number at 0 of 0.
+      if (f.nullable) {
+        nT++;
+        if (f.nulled! > 0) nC++;
+      }
     }
   }
   for (const e of Object.values(r.enums)) {
@@ -218,6 +228,7 @@ export function summarise(r: Pick<CoverageReport, "types" | "inputTypes" | "enum
     arguments: ratio(aC, aT),
     inputFields: ratio(iC, iT),
     inputFieldsBothStates: ratio(bC, bT),
+    inputFieldsNull: ratio(nC, nT),
     enumValues: ratio(eC, eT),
     enumValuesObserved: ratio(oC, oT),
   };
@@ -268,6 +279,7 @@ export function walkInputValue(report: CoverageReport, type: GraphQLInputType, v
       if (Object.prototype.hasOwnProperty.call(obj, field.name) && obj[field.name] !== undefined) {
         fc.sent++;
         tagTest(fc, test);
+        if (obj[field.name] === null) fc.nulled!++;
         walkInputValue(report, field.type, obj[field.name], fc.values, test);
       } else {
         fc.omitted++;
@@ -283,24 +295,30 @@ export interface RecordResult {
   errors: string[];
 }
 
+/** The first operation name in a document's text, for documents that do not parse. */
+function operationNameOf(document: string): string | null {
+  return /\b(?:query|mutation|subscription)\s+([_A-Za-z][_0-9A-Za-z]*)/.exec(document)?.[1] ?? null;
+}
+
 /** Record one captured operation into an existing report. */
 export function recordOperation(report: CoverageReport, schema: GraphQLSchema, op: CapturedOperation): RecordResult {
   if (!op.document) {
     report.operations.unresolved = (report.operations.unresolved ?? 0) + 1;
     return { valid: false, errors: [op.persistedId ? `persisted document ${op.persistedId} not resolved: give its manifest` : "capture has no document"] };
   }
+  const invalid = (errors: string[]): RecordResult => {
+    report.operations.invalid++;
+    addInvalid(report, { operationName: op.operationName ?? operationNameOf(op.document!), errors, count: 1, sources: op.source ? [op.source] : [] });
+    return { valid: false, errors };
+  };
   let doc;
   try {
     doc = parse(op.document);
   } catch (e) {
-    report.operations.invalid++;
-    return { valid: false, errors: [String((e as Error).message)] };
+    return invalid([String((e as Error).message)]);
   }
   const errors = validate(schema, doc);
-  if (errors.length > 0) {
-    report.operations.invalid++;
-    return { valid: false, errors: errors.map((e) => e.message) };
-  }
+  if (errors.length > 0) return invalid(errors.map((e) => e.message));
 
   const variables = op.variables ?? {};
   const typeInfo = new TypeInfo(schema);
@@ -338,6 +356,7 @@ export function recordOperation(report: CoverageReport, schema: GraphQLSchema, o
         if (!fc) return;
         fc.hits++;
         tagTest(fc, op.source);
+        if (op.identity) (fc.identities ??= {})[op.identity] = (fc.identities[op.identity] ?? 0) + 1;
         const returned = getNamedType(getNullableType(fieldDef.type));
         const rt = report.types[returned.name];
         if (rt) rt.hits++;
@@ -366,13 +385,19 @@ export function recordOperation(report: CoverageReport, schema: GraphQLSchema, o
     if (!ec) continue;
     for (const v of new Set(values)) if (ec.values[v]) ec.values[v].observed++;
   }
-  if (op.responseValues) report.operations.responses = (report.operations.responses ?? 0) + 1;
-  for (const [path, outcomes] of Object.entries(op.responseValues ?? {})) {
+  // Server capture records outcomes per field; wire capture records a schema-free shape, resolved here.
+  let values = op.responseValues;
+  if (!values && op.responseShape) {
+    const def = operations.find((d) => !wanted || d.name?.value === wanted);
+    if (def) values = shapeToValues(schema, doc, def, op.responseShape);
+  }
+  if (values) report.operations.responses = (report.operations.responses ?? 0) + 1;
+  for (const [path, outcomes] of Object.entries(values ?? {})) {
     const dot = path.indexOf(".");
     const fc = report.types[path.slice(0, dot)]?.fields[path.slice(dot + 1)];
     if (!fc) continue;
     const returned = (fc.returned ??= { value: 0, null: 0, empty: 0 });
-    for (const o of new Set(outcomes)) returned[o]++;
+    for (const o of new Set(outcomes)) returned[o] = (returned[o] ?? 0) + 1;
   }
   for (const [name, concrete] of Object.entries(op.responseTypes ?? {})) {
     const at = report.abstractTypes?.[name];
@@ -436,6 +461,8 @@ export function computeCoverage(
   for (const op of resolvePersisted([...operations], persisted)) recordOperation(report, schema, op);
   report.summary = summarise(report);
   summariseResponses(report);
+  const identities = summariseIdentities(report);
+  if (identities) report.identities = identities;
   const membership = subgraphSdls && Object.keys(subgraphSdls).length ? subgraphsFromSdls(subgraphSdls) : subgraphsFromSupergraph(schema);
   if (membership) attributeSubgraphs(report, membership);
   if (usage) applyUsage(report, usage);

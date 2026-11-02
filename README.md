@@ -71,17 +71,20 @@ gqlcov: 5 operations (3 queries, 2 mutations, 0 subscriptions), schema 9c5b5e1ae
   Arguments                           42.86%  (3/7)
   Input-type fields sent                 70%  (7/10)
   Optional inputs sent and omitted    28.57%  (2/7)
+  Nullable inputs sent as null           25%  (2/8)
   Enum values                         42.86%  (3/7)
 ```
 
 ## Did the data come back?
 
-A field counts as covered once a test requests it, even if every response had it as `null`. The Yoga/Envelop and Apollo plugins also record what each response contained, so the report adds two informational numbers (never gated):
+A field counts as covered once a test requests it, even if every response had it as `null`. All three capture layers also record what each response contained, so the report adds two informational numbers (never gated):
 
 - **Fields that returned a value**: of the requested fields, how many came back non-null and non-empty at least once. A field that was always `null` or an empty list gets an "always null" or "always empty" badge in the HTML report and is listed by `--untested`: the test asks for it but never sees data, so a resolver that broke would go unnoticed.
 - **Possible types returned**: for each interface or union your tests got back, which of its implementations or members came back, read from `__typename` where the operation selected it (Apollo Client and most clients add it). The HTML report lists them per interface and union.
 
-Only names and outcomes are kept, never response data. The Playwright capture has no schema, so these numbers come from the server plugins only; both appear only when some capture carried response data.
+**Errors** count too: GraphQL answers HTTP 200 and puts failures in an `errors` array that tests rarely read. A null that an error points at, or one above it from null propagation, counts as an error rather than a null, and so does a field on an error's path that propagation removed from the data. Such fields get an "error in n" badge in the HTML report and are listed under "returned an error" by `--untested` and in the Markdown summary; in JSON, `returned.error` counts the operations.
+
+Only names and outcomes are kept, never response data. The Playwright capture has no schema, so it records only which response paths held a value, a null, an empty list or an error, and the report maps them to schema fields through the operation (under unions and interfaces, a key selected on several types credits each). It therefore writes captures when a request finishes, or fails (without response data); `captureGraphQL(page, { responses: false })` writes them as soon as requests are sent, as before. Both numbers appear only when some capture carried response data; possible types need `__typename` and come from the server plugins.
 
 ## Which test covers what
 
@@ -106,6 +109,41 @@ gqlcov tests .gqlcov/report.json --test "create match" # everything one test tou
 ```
 
 In the HTML report each row shows its covering tests, typing a test name in the filter shows everything that test touches, and a Tests section lists what only each test covers. In the JSON, elements carry `tests` and `report.tests` counts operations per test.
+
+## Coverage per identity (roles)
+
+Authorization in GraphQL is per field: the same query can be fine for an admin and leak data to a guest, or the other way round. A field tested only as one role says nothing about the others. Tag each capture with who sent it:
+
+```ts
+useGqlcovCapture({ identity: (ctx) => ctx.user?.role ?? "anonymous" });           // Envelop / Yoga
+gqlcovCapturePlugin({ identity: (ctx) => ctx.user?.role ?? "anonymous" });        // Apollo Server
+await captureGraphQL(page, { identity: "admin", source: testInfo.title });       // Playwright: who this page is logged in as
+```
+
+The report then holds `identities`, output-field coverage per identity (a table in the console and the HTML report), and each field's `identities` counts (tagged "as admin, guest" in the HTML report). Gate on it:
+
+```sh
+gqlcov gate .gqlcov/report.json --min-identities 2                                # every mutation a test ran, as at least 2 roles
+gqlcov gate .gqlcov/report.json --min-identities 2 --identity-scope "Mutation.*" "Player.email"
+```
+
+`--min-identities` checks only fields a test requested (untested ones are already in the coverage numbers), in `--identity-scope` (`Type.field` patterns, default `Mutation.*`). From code: `identityGaps(report, 2, ["Mutation.*"])`.
+
+## Subscriptions
+
+Subscriptions are captured once, when the client subscribes (events are not counted, and no response data is read from them).
+
+- **Envelop / Yoga**: `useGqlcovCapture()` captures them with no extra setup.
+- **Apollo Server**: subscriptions run on a separate WebSocket server that Apollo's plugins never see. Call the capture from that server's operation hook:
+
+  ```ts
+  import { gqlcovSubscriptionCapture } from "@gqlcov/capture-apollo";
+  const capture = gqlcovSubscriptionCapture();                 // same options as the plugin
+  useServer({ schema, onOperation: (ctx, message, args) => capture(args) }, wsServer);   // graphql-ws 5
+  ```
+
+  Any WebSocket server works: pass the execution args (`document`, `operationName`, `variableValues`, `contextValue`).
+- **Playwright**: `captureGraphQL` also reads WebSocket frames on sockets whose URL matches `endpoint`, for both `graphql-ws` (`subscribe`) and the older `subscriptions-transport-ws` (`start`). Given a browser context, it watches every page in it. Sockets mocked with `page.routeWebSocket` never reach the network, so Playwright does not report them and they are not captured.
 
 ## Persisted queries
 
@@ -186,9 +224,9 @@ Mapping:
 | --- | --- |
 | Line | an output field, input field or enum value (hit when requested or sent) |
 | Function | a root operation field on Query, Mutation or Subscription |
-| Branch | each argument of a field; for an optional input field, the two arms *sent* and *omitted* |
+| Branch | each argument of a field; for an optional input field, the arms *sent* and *omitted*; for an input field that accepts null, one more arm *null* |
 
-So "80% lines, 50% functions, 57% branches" reads as: 80% of the schema surface was touched, half the operations ran, and 57% of arguments and optional-input states were exercised.
+So "80% lines, 50% functions, 57% branches" reads as: 80% of the schema surface was touched, half the operations ran, and 57% of arguments and input states (sent, omitted, null) were exercised.
 
 - **Codecov / Coveralls**: upload `.gqlcov/lcov.info` as one more coverage file alongside your Jest or c8 output. Flag it (`-F schema`) to get a separate trend line.
 - **SonarQube**: add `.gqlcov/lcov.info` to `sonar.javascript.lcov.reportPaths` (Sonar reads LCOV for any file the project contains).
@@ -212,7 +250,7 @@ gqlcov markdown <report> [--base report.json] [-o summary.md]
 gqlcov comment <summary.md> [--id name] [--token t] [--repo owner/name] [--pr n]
 gqlcov merge   <report>... -o merged.json          # parallel shards
 gqlcov diff    <base> <head> [--json]
-gqlcov gate    <report> [--min-fields n] [--min-input-fields n] [--min-enum-values n] [--base report.json] [--tolerance points] [--subgraph name...|'*'] [--min-used-fields n] [--min-used-inputs n] [--require pattern...]       # a missing --base file skips the no-decrease check
+gqlcov gate    <report> [--min-fields n] [--min-input-fields n] [--min-input-null n] [--min-enum-values n] [--base report.json] [--tolerance points] [--subgraph name...|'*'] [--min-used-fields n] [--min-used-inputs n] [--require pattern...] [--max-invalid n] [--min-identities n] [--identity-scope pattern...]       # a missing --base file skips the no-decrease check
 ```
 
 `gate --require` takes the same patterns and fails when any element they match is uncovered, which says "every mutation has a test" more directly than a percentage: `gqlcov gate .gqlcov/report.json --require "Mutation.*" "Query.payment*" "PaymentInput.*"`. A pattern that matches nothing fails too, so a typo cannot pass. Values of output-only enums count as covered once a response returned them.
@@ -249,7 +287,7 @@ steps:
     if: github.event_name == 'pull_request'
     with: { path: .gqlcov/base.json, key: gqlcov-main-${{ github.sha }}, restore-keys: gqlcov-main- }
 
-  - uses: mimattan/gqlcov@v0.3.2         # the release that ships the Action
+  - uses: mimattan/gqlcov@v0.4.0         # the release that ships the Action
     with: { report: .gqlcov/report.json, base: .gqlcov/base.json }
 
   - run: npx gqlcov gate .gqlcov/report.json --min-fields 60 --base .gqlcov/base.json
@@ -273,6 +311,14 @@ gqlcov comment summary.md                 # GITHUB_TOKEN, GITHUB_REPOSITORY and 
 
 Codecov and friends still work alongside: upload `.gqlcov/lcov.info` (see above). For sharded suites, run `gqlcov merge` in a final job before the Action.
 
+## Stale test queries
+
+A captured document that no longer parses or validates against the schema is not counted toward coverage. It usually means a test or a fixture has drifted from the schema: a field was renamed or removed and the test kept sending the old query (against a mock, it may even still pass). gqlcov lists each one with its operation name, the validation errors, how often it was seen and the `source` labels of the tests that sent it, in the console, the HTML report and `report.invalid` in the JSON. Fail CI on them with:
+
+```sh
+gqlcov gate .gqlcov/report.json --max-invalid 0
+```
+
 ## How coverage is computed
 
 - Each captured document is parsed and validated against the schema. Invalid documents are counted, not analysed.
@@ -280,6 +326,7 @@ Codecov and friends still work alongside: upload `.gqlcov/lcov.info` (see above)
 - Argument values are read as the client wrote them: variables (`$x`) as sent, literals without type coercion, so an input field's default value never counts as sent and enum values count by name. A variable that was not supplied counts as an absent argument or input field.
 - Each value is walked against its input type: input-object fields are marked *sent* or *omitted*, enum values are counted, scalars and lists are classified. Lists recurse into their items; a bare value for a list type is treated as a one-item list, as GraphQL coercion does.
 - A field counts as covered when it was requested at least once. An optional input field counts as "both states" when it was both sent and omitted somewhere in the run.
+- An input field that accepts null counts as "sent as null" when a client sent an explicit `null` for it. For a partial update that is the "clear this value" case, and servers handle it inconsistently (some drop the null, some cannot tell it from an omitted field), so it is tracked as its own number: `summary.inputFieldsNull`, gated with `--min-input-null`. A null item inside a list does not count.
 
 ## Why not combinations
 

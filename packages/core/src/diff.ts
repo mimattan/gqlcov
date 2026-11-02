@@ -1,3 +1,4 @@
+import { DEFAULT_IDENTITY_SCOPE, identityGaps } from "./identities.js";
 import { globToRegExp } from "./exclude.js";
 import { UNGATED_SUMMARY_KEYS, type CoverageDiff, type CoverageReport, type CoverageSummary, type GateOptions, type GateResult, type UsageJoin } from "./types.js";
 
@@ -71,6 +72,8 @@ export function gate(report: CoverageReport, options: GateOptions): GateResult {
       failures.push(`${label}field coverage ${s.fields.percent}% is below the minimum ${options.minFields}%`);
     if (options.minInputFields !== undefined && s.inputFields.percent < options.minInputFields)
       failures.push(`${label}input-field coverage ${s.inputFields.percent}% is below the minimum ${options.minInputFields}%`);
+    if (options.minInputNull !== undefined && (s.inputFieldsNull?.percent ?? 0) < options.minInputNull)
+      failures.push(`${label}${s.inputFieldsNull ? `${s.inputFieldsNull.percent}% of nullable input fields were sent as null, below the minimum ${options.minInputNull}%` : "--min-input-null needs a report that tracks null inputs: run gqlcov report again"}`);
     if (options.minEnumValues !== undefined && s.enumValues.percent < options.minEnumValues)
       failures.push(`${label}enum-value coverage ${s.enumValues.percent}% is below the minimum ${options.minEnumValues}%`);
     if (delta && baseSummary) {
@@ -102,6 +105,21 @@ export function gate(report: CoverageReport, options: GateOptions): GateResult {
     }
     const missing = matched.filter(([, covered]) => !covered).map(([p]) => p);
     if (missing.length) failures.push(`required "${pattern}": ${missing.length} of ${matched.length} not covered: ${missing.slice(0, 20).join(", ")}${missing.length > 20 ? ` and ${missing.length - 20} more` : ""}`);
+  }
+  if (options.minIdentities !== undefined) {
+    const scope = options.identityScope?.length ? options.identityScope : undefined;
+    if (!report.identities) failures.push(`--min-identities needs captures that carry an identity (the capture layer's identity option)`);
+    else {
+      const gaps = identityGaps(report, options.minIdentities, scope);
+      if (gaps.length) {
+        const shown = gaps.slice(0, 10).map((g) => `${g.path} (${g.identities.length ? `as ${g.identities.join(", ")}` : "no identity"})`);
+        failures.push(`${gaps.length} fields in ${(scope ?? DEFAULT_IDENTITY_SCOPE).join(", ")} were requested by fewer than ${options.minIdentities} identities: ${shown.join(", ")}${gaps.length > 10 ? ", ..." : ""}`);
+      }
+    }
+  }
+  if (options.maxInvalid !== undefined && report.operations.invalid > options.maxInvalid) {
+    const names = (report.invalid ?? []).map((x) => `${x.operationName ?? "(anonymous)"}: ${x.errors[0]}`);
+    failures.push(`${report.operations.invalid} captured operations do not validate against the schema, above the maximum ${options.maxInvalid}${names.length ? ` (${names.slice(0, 5).join("; ")}${names.length > 5 ? "; ..." : ""})` : ""}`);
   }
   if (d && d.lostCoverage.length > 0) {
     const inScope = options.subgraphs?.length ? d.lostCoverage.filter((p) => pathInSubgraphs(report, p, options.subgraphs!)) : d.lostCoverage;
@@ -136,14 +154,16 @@ function pathInSubgraphs(report: CoverageReport, path: string, subgraphs: string
 
 /**
  * Uncovered elements, grouped, for the "what to test next" list. With response data it also lists requested fields
- * that never came back with a value, and possible types of interfaces and unions that never came back ("Node.Club").
+ * that never came back with a value, fields whose response had an error, and possible types of interfaces and
+ * unions that never came back ("Node.Club").
  */
-export function uncovered(report: CoverageReport): { fields: string[]; arguments: string[]; inputFields: string[]; enumValues: string[]; neverReturned: string[]; possibleTypes: string[] } {
-  const out = { fields: [] as string[], arguments: [] as string[], inputFields: [] as string[], enumValues: [] as string[], neverReturned: [] as string[], possibleTypes: [] as string[] };
+export function uncovered(report: CoverageReport): { fields: string[]; arguments: string[]; inputFields: string[]; enumValues: string[]; neverReturned: string[]; errored: string[]; possibleTypes: string[] } {
+  const out = { fields: [] as string[], arguments: [] as string[], inputFields: [] as string[], enumValues: [] as string[], neverReturned: [] as string[], errored: [] as string[], possibleTypes: [] as string[] };
   for (const [tn, t] of Object.entries(report.types))
     for (const [fn, f] of Object.entries(t.fields)) {
       if (f.hits === 0) out.fields.push(`${tn}.${fn}`);
       else if (f.returned && f.returned.value === 0) out.neverReturned.push(`${tn}.${fn}`);
+      if (f.returned?.error) out.errored.push(`${tn}.${fn}`);
       for (const [an, a] of Object.entries(f.args)) if (a.hits === 0) out.arguments.push(`${tn}.${fn}(${an})`);
     }
   for (const [tn, t] of Object.entries(report.inputTypes)) for (const [fn, f] of Object.entries(t.fields)) if (f.sent === 0) out.inputFields.push(`${tn}.${fn}`);

@@ -1,8 +1,10 @@
 import { summarise, summariseResponses, tagTest } from "./coverage.js";
+import { summariseIdentities } from "./identities.js";
 import { summariseSubgraphs } from "./subgraphs.js";
 import { summariseUsage } from "./usage.js";
 import type { CoverageReport } from "./types.js";
 import { addValueClasses } from "./values.js";
+import { addInvalid } from "./invalid.js";
 
 /** Merge reports from parallel shards. All reports must share a schema hash. */
 export function mergeReports(reports: CoverageReport[]): CoverageReport {
@@ -36,10 +38,12 @@ export function mergeReports(reports: CoverageReport[]): CoverageReport {
         const of = ot.fields[fn];
         if (!of) continue;
         of.hits += f.hits;
+        for (const [id, h] of Object.entries(f.identities ?? {})) (of.identities ??= {})[id] = (of.identities[id] ?? 0) + h;
         union(of, f);
         if (f.returned) {
           const ret = (of.returned ??= { value: 0, null: 0, empty: 0 });
           for (const k of ["value", "null", "empty"] as const) ret[k] += f.returned[k];
+          if (f.returned.error) ret.error = (ret.error ?? 0) + f.returned.error;
         }
         for (const [an, a] of Object.entries(f.args)) {
           const oa = of.args[an];
@@ -59,6 +63,7 @@ export function mergeReports(reports: CoverageReport[]): CoverageReport {
         of.sent += f.sent;
         union(of, f);
         of.omitted += f.omitted;
+        if (of.nulled !== undefined || f.nulled !== undefined) of.nulled = (of.nulled ?? 0) + (f.nulled ?? 0);
         of.values = addValueClasses(of.values, f.values);
       }
     }
@@ -73,10 +78,13 @@ export function mergeReports(reports: CoverageReport[]): CoverageReport {
         ov.observed = (ov.observed ?? 0) + (v.observed ?? 0);
       }
     }
+    for (const x of r.invalid ?? []) addInvalid(out, x);
     for (const [k, v] of Object.entries(r.argumentValues)) if (out.argumentValues[k]) out.argumentValues[k] = addValueClasses(out.argumentValues[k], v);
   }
   out.summary = summarise(out);
   summariseResponses(out);
+  const identities = summariseIdentities(out);
+  if (identities) out.identities = identities;
   if (out.subgraphs) out.subgraphs = summariseSubgraphs(out);
   if (out.usage) out.usage = { ...out.usage, ...summariseUsage(out) };
   return out;

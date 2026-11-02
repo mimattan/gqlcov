@@ -18,9 +18,14 @@ interface Row { name: string; covered: number; total: number; body: string; kind
 const gAttr = (graphs?: string[]) => (graphs ? ` data-g="${esc(graphs.join(" "))}"` : "");
 /** Test names on a list item: searchable through data-t, readable in a short label with the full list on hover. */
 const tAttr = (tests?: string[]) => (tests ? ` data-t="${esc(tests.join("\n").toLowerCase())}"` : "");
-/** A requested field that never came back with a value: the test asks for it but never sees data. */
+/**
+ * A requested field whose response had an error, or failing that, one that never came back with a value:
+ * the test asks for it but never sees data.
+ */
 const noValueBadge = (f: FieldCoverage) =>
-  f.hits > 0 && f.returned && f.returned.value === 0
+  f.hits > 0 && f.returned?.error
+    ? `<span class="err-badge" title="operations whose response had an error at this field">error in ${f.returned.error}</span>`
+    : f.hits > 0 && f.returned && f.returned.value === 0 && (f.returned.null || f.returned.empty)
     ? `<span class="noval" title="requested, but every response had it as ${f.returned.null && f.returned.empty ? "null or an empty list" : f.returned.null ? "null" : "an empty list"}">${f.returned.null && f.returned.empty ? "null or empty" : f.returned.null ? "always null" : "always empty"}</span>`
     : "";
 
@@ -39,7 +44,9 @@ function typeRow(report: CoverageReport, tn: string, label?: string): Row {
       const args = Object.entries(f.args);
       const argText = args.length ? `<span class="args">(${args.map(([an, a]) => `<span class="${a.hits > 0 ? "on" : "off"}" title="${a.hits} hits${a.tests ? `: ${esc(a.tests.join(", "))}` : ""}">${esc(an)}</span>`).join(", ")})</span>` : "";
       const prod = prodBadge(f.requests, f.hits > 0);
-      return `<li class="${f.hits > 0 ? "on" : "off"}" data-n="${esc(fn.toLowerCase())}"${gAttr(f.graphs)}${tAttr(f.tests)}><span class="fname">${esc(fn)}${argText}</span><span class="hits">${noValueBadge(f)}${byTests(f.tests)}${prod}${f.hits > 0 ? `${f.hits}×` : "never"}</span></li>`;
+      const who = f.identities ? Object.keys(f.identities).sort() : [];
+      const idTag = who.length ? `<span class="who" title="identities that requested this field">as ${esc(who.join(", "))}</span>` : "";
+      return `<li class="${f.hits > 0 ? "on" : "off"}" data-n="${esc(fn.toLowerCase())}"${gAttr(f.graphs)}${tAttr(f.tests)}><span class="fname">${esc(fn)}${argText}</span><span class="hits">${noValueBadge(f)}${idTag}${byTests(f.tests)}${prod}${f.hits > 0 ? `${f.hits}×` : "never"}</span></li>`;
     })
     .join("");
   return { name: label ?? tn, covered, total: fields.length, body: `<ul class="fields">${lines}</ul>`, kind: t.kind === "INTERFACE" ? "interface" : "type", uncovered: covered < fields.length, graphs: t.graphs };
@@ -52,7 +59,10 @@ function inputRow(report: CoverageReport, tn: string): Row {
   const lines = fields
     .map(([fn, f]) => {
       const state = f.sent === 0 ? "off" : !f.required && f.omitted === 0 ? "half" : "on";
-      const detail = f.sent === 0 ? "never sent" : `sent ${f.sent}${f.required ? "" : `, omitted ${f.omitted}`}${f.values.null ? `, null ${f.values.null}` : ""}`;
+      // Older reports have no `nulled` count: fall back to null values, which also count null list items.
+      const nulls = f.nulled ?? f.values.null;
+      const nullText = f.nullable ? `, null ${nulls}` : nulls ? `, null ${nulls}` : "";
+      const detail = f.sent === 0 ? "never sent" : `sent ${f.sent}${f.required ? "" : `, omitted ${f.omitted}`}${nullText}`;
       return `<li class="${state}" data-n="${esc(fn.toLowerCase())}"${gAttr(f.graphs)}${tAttr(f.tests)}><span class="fname">${esc(fn)}${f.required ? "<span class='req'>!</span>" : ""}</span><span class="hits">${byTests(f.tests)}${prodBadge(f.requests, f.sent > 0)}${detail}</span></li>`;
     })
     .join("");
@@ -158,6 +168,22 @@ function testsSection(report: CoverageReport): string {
   return `<section class="tests"><h2>Tests <span class="h2-note">${list.length}</span></h2><p class="hint">From the source label on each capture. "Only here" lists what no other test covers; type a test name in the filter to see everything it touches.</p>${rows.join("")}</section>`;
 }
 
+function invalidSection(report: CoverageReport): string {
+  const list = report.invalid ?? [];
+  if (!list.length) return "";
+  const items = list
+    .map((x) => `<li class="off"><span class="fname">${esc(x.operationName ?? "(anonymous)")}${x.sources.length ? `<small class="src">${esc(x.sources.join(", "))}</small>` : ""}<small class="err">${x.errors.map(esc).join("<br>")}</small></span><span class="hits">${x.count}×</span></li>`)
+    .join("");
+  return `<section class="invalid"><h2>Operations that do not validate <span class="h2-note">${report.operations.invalid}</span></h2><p class="hint">These captures were not counted. A test sends a query the schema no longer accepts: the test or its fixture has drifted from the schema.</p><div class="row risk-box"><ul class="fields">${items}</ul></div></section>`;
+}
+
+function identityTable(report: CoverageReport): string {
+  const ids = Object.entries(report.identities ?? {});
+  if (!ids.length) return "";
+  const rows = ids.map(([n, r]) => `<tr><th scope="row">${esc(n)}</th><td><span class="mini"><span class="mini-track"><span class="fill ${cls(r.percent)}" style="width:${r.percent}%"></span></span><span class="mini-num">${r.percent}%</span></span><small>${r.covered}/${r.total}</small></td></tr>`).join("");
+  return `<section class="identities"><h2>Identities <span class="h2-note">${ids.length}</span></h2><p class="hint">Output fields each identity requested. A field tested under one role only says nothing about what the others may see; each field is tagged with the identities that requested it.</p><table class="sg"><thead><tr><th>Identity</th><th>Output fields requested</th></tr></thead><tbody>${rows}</tbody></table></section>`;
+}
+
 function subgraphTable(report: CoverageReport): string {
   const names = Object.keys(report.subgraphs ?? {});
   if (!names.length) return "";
@@ -224,7 +250,8 @@ body.only-gaps .row.full:not(.aux),body.only-gaps li.on{display:none}
 .hidden{display:none!important}
 .empty{color:var(--ink2);font-size:14px;padding:12px 0}
 .prod{display:inline-block;margin-right:10px;padding:1px 7px;border-radius:10px;background:var(--track);color:var(--ink2);font-size:11.5px}.prod.risk{background:var(--low);color:#fff}
-.usage{margin-bottom:28px}.risk-box{padding:0}.risk-head{padding:10px 14px;font-weight:550}.risk-box .fields{border-top:1px solid var(--line)}
+.usage,.invalid,.identities{margin-bottom:28px}.who{display:inline-block;margin-right:10px;padding:1px 7px;border-radius:10px;background:var(--track);color:var(--accent);font-size:11.5px;white-space:normal}.invalid .fname small{display:block;font-family:inherit}.invalid .src{color:var(--ink2)}.invalid .err{color:var(--low);white-space:normal}.risk-box{padding:0}.risk-head{padding:10px 14px;font-weight:550}.risk-box .fields{border-top:1px solid var(--line)}
+.err-badge{display:inline-block;margin-right:10px;padding:1px 7px;border-radius:10px;background:var(--low);color:#fff;font-size:11.5px}
 .noval{display:inline-block;margin-right:10px;padding:1px 7px;border-radius:10px;background:var(--half-bg);color:var(--mid);font-size:11.5px}
 .by{display:inline-block;margin-right:10px;color:var(--accent);font-size:11.5px;max-width:220px;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom}
 .tests .row.redundant .rname{color:var(--ink2)}
@@ -246,6 +273,7 @@ ${ledger("Output fields", s.fields, "requested at least once")}
 ${ledger("Arguments", s.arguments, "passed at least once")}
 ${ledger("Input fields", s.inputFields, "sent at least once")}
 ${ledger("Optional input fields, both states", s.inputFieldsBothStates, "seen sent and seen omitted")}
+${s.inputFieldsNull ? ledger("Nullable input fields sent as null", s.inputFieldsNull, "seen sent as an explicit null, which clears a value in a partial update") : ""}
 ${ledger("Enum values", s.enumValues, "sent as input at least once; enums a client can send")}
 ${s.enumValuesObserved ? ledger("Enum values in responses", s.enumValuesObserved, "returned at least once; informational, never gated") : ""}
 ${s.fieldsReturned ? ledger("Fields that returned a value", s.fieldsReturned, "requested fields that came back non-null and non-empty at least once; informational") : ""}
@@ -255,14 +283,16 @@ ${report.usage ? ledger("Production fields tested", report.usage.usedFields, "fi
 ${report.usage?.usedInputs ? ledger("Production inputs sent by a test", report.usage.usedInputs, "input fields and enum values with production traffic that a test sent") : ""}
 </div>
 ${usageSection(report)}
+${invalidSection(report)}
 
 ${subgraphTable(report)}
+${identityTable(report)}
 <div class="toolbar"><input type="search" id="q" placeholder="Filter types, fields, values, tests…" aria-label="Filter">${subgraphNames.length ? `<select id="sg" aria-label="Subgraph"><option value="">All subgraphs</option>${subgraphNames.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join("")}</select>` : ""}<label><input type="checkbox" id="gaps"> uncovered only</label><button type="button" id="expand">Expand all</button><button type="button" id="collapse">Collapse</button></div>
 
 ${rootSections(report, schema)}
 
 <section><h2>All types <span class="h2-note">${Object.keys(report.types).length - [...rootNames].filter((n) => report.types[n]).length}</span></h2>${typeRows}</section>
-<section><h2>Input types <span class="h2-note">${Object.keys(report.inputTypes).length}</span></h2><p class="legend">Green: sent, and omitted too where optional. Amber: sent but never omitted. Plain: never sent. ! marks required fields.</p>${inputRows}</section>
+<section><h2>Input types <span class="h2-note">${Object.keys(report.inputTypes).length}</span></h2><p class="legend">Green: sent, and omitted too where optional. Amber: sent but never omitted. Plain: never sent. ! marks required fields. "null n" counts explicit nulls for fields that accept null.</p>${inputRows}</section>
 <section><h2>Enums <span class="h2-note">${Object.keys(report.enums).length}</span></h2><p class="legend">Enums a client can send are scored on values sent. Output-only enums ("out enum") are scored on values seen in responses and do not count toward the enum-values number.</p>${enumRows}</section>
 ${abstractSection(report)}
 ${testsSection(report)}

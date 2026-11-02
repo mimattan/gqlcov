@@ -23,6 +23,7 @@ function printSummary(r: CoverageReport): void {
   console.log(line("Arguments", s.arguments));
   console.log(line("Input-type fields sent", s.inputFields));
   console.log(line("Optional inputs sent and omitted", s.inputFieldsBothStates));
+  if (s.inputFieldsNull) console.log(line("Nullable inputs sent as null", s.inputFieldsNull));
   console.log(line("Enum values sent", s.enumValues));
   // Older reports have no observed number.
   if (s.enumValuesObserved) console.log(line("Enum values in responses (not gated)", s.enumValuesObserved));
@@ -31,6 +32,7 @@ function printSummary(r: CoverageReport): void {
   if (r.usage) console.log(line("Production fields tested", r.usage.usedFields));
   if (r.usage?.usedInputs) console.log(line("Production inputs sent by a test", r.usage.usedInputs));
   printSubgraphs(r);
+  printIdentities(r);
 }
 
 
@@ -46,6 +48,25 @@ function printUsage(r: CoverageReport): void {
     if (u.untestedUsed.length > 25) console.log(`    ... and ${u.untestedUsed.length - 25} more`);
   }
   if (u.unknown.length) console.log(`  in usage but not in the schema (${u.unknown.length}): ${u.unknown.slice(0, 10).join(", ")}${u.unknown.length > 10 ? ", ..." : ""}`);
+}
+
+function printIdentities(r: CoverageReport): void {
+  const ids = Object.entries(r.identities ?? {});
+  if (!ids.length) return;
+  const w = Math.max(8, ...ids.map(([n]) => n.length));
+  console.log(`\n  ${"Identity".padEnd(w)}  Output fields requested`);
+  for (const [n, x] of ids) console.log(`  ${n.padEnd(w)}  ${String(x.percent).padStart(6)}% (${x.covered}/${x.total})`);
+}
+
+function printInvalid(r: CoverageReport): void {
+  const list = r.invalid ?? [];
+  if (!list.length) return;
+  console.log(`\n  operations that do not validate against the schema (${r.operations.invalid}):`);
+  for (const x of list.slice(0, 20)) {
+    console.log(`    ${x.operationName ?? "(anonymous)"}${x.count > 1 ? ` (${x.count}x)` : ""}${x.sources.length ? ` from ${x.sources.join(", ")}` : ""}`);
+    for (const e of x.errors.slice(0, 3)) console.log(`      ${e}`);
+  }
+  if (list.length > 20) console.log(`    ... and ${list.length - 20} more`);
 }
 
 function printSubgraphs(r: CoverageReport): void {
@@ -124,12 +145,13 @@ export function buildCli(): Command {
         if (isRemote(o.schema)) console.log(`gqlcov: schema from ${loaded.label}${loaded.subgraphSdls ? `, ${Object.keys(loaded.subgraphSdls).length} subgraphs` : ""}`);
         printSummary(report);
         printUsage(report);
+        printInvalid(report);
         if (ops.length === 0) console.log(`  (no captures found in ${o.captures.join(", ")})`);
         if (report.operations.unresolved) console.log(`  ${report.operations.unresolved} captures carried only a persisted id: pass the manifest with --persisted, or the capture layer's manifest option`);
         console.log(`  report: ${o.out}${o.html ? `, html: ${o.html}` : ""}${o.lcov ? `, lcov: ${o.lcov}` : ""}${o.istanbul ? `, istanbul: ${o.istanbul}` : ""}`);
         if (o.untested) {
           const u = uncovered(report);
-          const titles: Record<keyof typeof u, string> = { fields: "fields", arguments: "arguments", inputFields: "input fields", enumValues: "enum values", neverReturned: "requested, but never returned a value", possibleTypes: "possible types never returned" };
+          const titles: Record<keyof typeof u, string> = { fields: "fields", arguments: "arguments", inputFields: "input fields", enumValues: "enum values", neverReturned: "requested, but never returned a value", errored: "returned an error", possibleTypes: "possible types never returned" };
           for (const [k, v] of Object.entries(u)) if (v.length) console.log(`\n  ${titles[k as keyof typeof u]} (${v.length}):\n    ${v.join("\n    ")}`);
         }
       }
@@ -257,6 +279,7 @@ export function buildCli(): Command {
     .argument("<report>", "report JSON")
     .option("--min-fields <pct>", "minimum output-field coverage", parseFloat)
     .option("--min-input-fields <pct>", "minimum input-field coverage", parseFloat)
+    .option("--min-input-null <pct>", "minimum share of nullable input fields sent as an explicit null", parseFloat)
     .option("--min-enum-values <pct>", "minimum coverage of enum values sent as input", parseFloat)
     .option("--base <report>", "fail on any decrease versus this report (a missing file skips this check, for the first run)")
     .option("--tolerance <points>", "allowed decrease in percentage points", parseFloat, 0)
@@ -264,6 +287,9 @@ export function buildCli(): Command {
     .option("--min-used-fields <pct>", "minimum share of fields with production traffic that are tested (report needs --usage)", parseFloat)
     .option("--require <pattern...>", "every element matching these patterns must be covered, e.g. 'Mutation.*' 'Query.payment*' (same syntax as --exclude)")
     .option("--min-used-inputs <pct>", "minimum share of input fields and enum values with production traffic that a test sent (usage must cover inputs)", parseFloat)
+    .option("--min-identities <n>", "every requested field in --identity-scope must be requested by at least n identities (roles)", (v: string) => parseInt(v, 10))
+    .option("--identity-scope <pattern...>", "Type.field patterns for --min-identities", ["Mutation.*"])
+    .option("--max-invalid <n>", "maximum captured operations that do not validate against the schema (0: any stale test query fails)", (v: string) => parseInt(v, 10))
     .action((reportPath: string, o) => {
       const report = readReport(reportPath);
       const baseMissing = o.base !== undefined && !existsSync(o.base);
@@ -271,6 +297,7 @@ export function buildCli(): Command {
       const result = gate(report, {
         minFields: o.minFields,
         minInputFields: o.minInputFields,
+        minInputNull: o.minInputNull,
         minEnumValues: o.minEnumValues,
         base: o.base && !baseMissing ? readReport(o.base) : undefined,
         tolerance: o.tolerance,
@@ -278,6 +305,9 @@ export function buildCli(): Command {
         minUsedFields: o.minUsedFields,
         minUsedInputs: o.minUsedInputs,
         require: o.require,
+        maxInvalid: o.maxInvalid,
+        minIdentities: o.minIdentities,
+        identityScope: o.identityScope,
       });
       printSummary(report);
       if (result.passed) return console.log("  gate: passed");

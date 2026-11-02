@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { ApolloServer } from "@apollo/server";
 import { buildSchema, parse } from "graphql";
 import { readCaptures } from "@gqlcov/core";
-import { gqlcovCapturePlugin, type CaptureOptions } from "../src/index.js";
+import { gqlcovCapturePlugin, gqlcovSubscriptionCapture, type CaptureOptions } from "../src/index.js";
 
 const typeDefs = `enum Status { OPEN CLOSED } type Court { id: ID!, status: Status! } type Query { court(id: ID!): Court, boom: Int! }`;
 const resolvers = { Query: { court: (_: unknown, { id }: { id: string }) => ({ id, status: "OPEN" }), boom: () => { throw new Error("boom"); } } };
@@ -29,9 +29,9 @@ const fresh = () => join(mkdtempSync(join(tmpdir(), "gqlcov-apollo-")), "capture
 describe("gqlcovCapturePlugin", () => {
   it("captures document, operation, variables, source and response enums", async () => {
     const dir = fresh();
-    await run({ dir, enabled: true, source: (ctx) => ctx.who as string }, `query Q($id: ID!) { court(id: $id) { status } }`, { id: "1" }, "Q", { who: "test a" });
+    await run({ dir, enabled: true, source: (ctx) => ctx.who as string, identity: (ctx) => ctx.role as string }, `query Q($id: ID!) { court(id: $id) { status } }`, { id: "1" }, "Q", { who: "test a", role: "admin" });
     const [op] = readCaptures(dir);
-    expect(op).toMatchObject({ operationName: "Q", variables: { id: "1" }, source: "test a", responseEnums: { Status: ["OPEN"] } });
+    expect(op).toMatchObject({ identity: "admin", operationName: "Q", variables: { id: "1" }, source: "test a", responseEnums: { Status: ["OPEN"] } });
     expect(op.responseValues).toEqual({ "Query.court": ["value"], "Court.status": ["value"] });
     expect(op.responseTypes).toEqual({});
   });
@@ -44,7 +44,8 @@ describe("gqlcovCapturePlugin", () => {
     const ops = readCaptures(dir);
     expect(ops).toHaveLength(1);
     expect(ops[0]).toMatchObject({ operationName: null, variables: null });
-    expect(ops[0].responseEnums).toBeUndefined();
+    expect(ops[0].responseValues).toEqual({ "Query.boom": ["error"] }); // data is null, but the error says which field failed
+    expect(ops[0].responseEnums).toEqual({});
   });
 
   it("is off when disabled, and follows a function, GQLCOV_CAPTURE and NODE_ENV", async () => {
@@ -102,5 +103,47 @@ describe("gqlcovCapturePlugin", () => {
       process.chdir(cwd);
     }
     expect(readCaptures(join(root, ".gqlcov/captures"))).toHaveLength(1);
+  });
+});
+
+describe("gqlcovSubscriptionCapture", () => {
+  const document = parse(`subscription Tick($n: Int) { tick(n: $n) }`);
+
+  it("captures the execution args a WebSocket server hands over, with a source", () => {
+    const dir = fresh();
+    gqlcovSubscriptionCapture({ dir, enabled: true, source: (ctx) => ctx.who as string, identity: (ctx) => ctx.role as string })({ document, operationName: "Tick", variableValues: { n: 1 }, contextValue: { who: "ws test", role: "member" } });
+    gqlcovSubscriptionCapture({ dir: `${dir}-noctx`, enabled: true, identity: (ctx) => (Object.keys(ctx).length ? "had" : "none") })({ document });
+    expect(readCaptures(`${dir}-noctx`)[0].identity).toBe("none");
+    gqlcovSubscriptionCapture({ dir, enabled: true, source: (ctx) => (Object.keys(ctx).length ? "context" : "no context") })({ document });
+    const ops = readCaptures(dir);
+    expect(ops).toHaveLength(2);
+    expect(ops[0]).toMatchObject({ operationName: "Tick", variables: { n: 1 }, source: "ws test", identity: "member" });
+    expect(ops[0].document).toContain("subscription Tick");
+    expect(ops[1]).toMatchObject({ operationName: null, variables: null, source: "no context" });
+  });
+
+  it("is off when disabled, uses the env folder, and never throws when it cannot write", () => {
+    const root = mkdtempSync(join(tmpdir(), "gqlcov-apollo-"));
+    gqlcovSubscriptionCapture({ dir: join(root, "off"), enabled: false })({ document });
+    expect(readCaptures(join(root, "off"))).toHaveLength(0);
+    process.env.GQLCOV_CAPTURE_DIR = join(root, "env");
+    gqlcovSubscriptionCapture({ enabled: true })({ document });
+    expect(readCaptures(join(root, "env"))).toHaveLength(1);
+    writeFileSync(join(root, "file"), "x");
+    expect(() => gqlcovSubscriptionCapture({ dir: join(root, "file", "c"), enabled: true })({ document })).not.toThrow();
+  });
+
+  it("defaults to .gqlcov/captures and to GQLCOV_CAPTURE", () => {
+    const root = mkdtempSync(join(tmpdir(), "gqlcov-apollo-"));
+    delete process.env.GQLCOV_CAPTURE_DIR;
+    process.env.GQLCOV_CAPTURE = "1";
+    const cwd = process.cwd();
+    process.chdir(root);
+    try {
+      gqlcovSubscriptionCapture()({ document });
+      expect(readCaptures(join(root, ".gqlcov/captures"))).toHaveLength(1);
+    } finally {
+      process.chdir(cwd);
+    }
   });
 });

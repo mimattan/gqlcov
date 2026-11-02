@@ -1,11 +1,13 @@
 import type { ApolloServerPlugin } from "@apollo/server";
 import { collectResponse, DEFAULT_CAPTURE_DIR, writeCapture, type CapturedOperation } from "@gqlcov/core";
-import { print } from "graphql";
+import { print, type DocumentNode } from "graphql";
 
 export interface CaptureOptions {
   dir?: string;
   enabled?: boolean | (() => boolean);
   source?: (context: Record<string, unknown>) => string | undefined;
+  /** Who sent the operation, e.g. the role of the authenticated user, so coverage can be split per identity. */
+  identity?: (context: Record<string, unknown>) => string | undefined;
 }
 
 function isEnabled(opt: CaptureOptions["enabled"]): boolean {
@@ -33,6 +35,7 @@ export function gqlcovCapturePlugin<TContext extends Record<string, unknown> = R
             operationName: ctx.operationName ?? null,
             variables: (ctx.request.variables as Record<string, unknown> | undefined) ?? null,
             source: options.source?.(ctx.contextValue),
+            identity: options.identity?.(ctx.contextValue),
           };
         },
         async willSendResponse(ctx) {
@@ -40,9 +43,10 @@ export function gqlcovCapturePlugin<TContext extends Record<string, unknown> = R
           try {
             // For incremental (deferred) responses only the initial payload is walked.
             const body = ctx.response.body;
-            const data = body.kind === "single" ? body.singleResult.data : body.initialResult.data;
-            if (data) {
-              const facts = collectResponse(ctx.schema, ctx.document, data, ctx.operationName);
+            const result = body.kind === "single" ? body.singleResult : body.initialResult;
+            // A response whose data is null still says which fields failed, through its errors.
+            if (result.data || result.errors?.length) {
+              const facts = collectResponse(ctx.schema, ctx.document, result.data, ctx.operationName, result.errors);
               Object.assign(op, { responseEnums: facts.enums, responseValues: facts.values, responseTypes: facts.types });
             }
           } catch {
@@ -56,5 +60,38 @@ export function gqlcovCapturePlugin<TContext extends Record<string, unknown> = R
         },
       };
     },
+  };
+}
+
+/** The execution arguments a WebSocket server hands to its operation hook (graphql-ws `onOperation`, for example). */
+export interface SubscriptionArgs {
+  document: DocumentNode;
+  operationName?: string | null;
+  variableValues?: Record<string, unknown> | null;
+  contextValue?: unknown;
+}
+
+/**
+ * Apollo Server's plugins never see subscriptions: they run on a separate WebSocket server. Call the returned
+ * function from that server's operation hook to capture each subscription once, when the client subscribes:
+ *
+ *   const capture = gqlcovSubscriptionCapture();
+ *   useServer({ schema, onOperation: (ctx, message, args) => capture(args) }, wsServer); // graphql-ws 5
+ */
+export function gqlcovSubscriptionCapture(options: CaptureOptions = {}): (args: SubscriptionArgs) => void {
+  const dir = options.dir ?? process.env.GQLCOV_CAPTURE_DIR ?? DEFAULT_CAPTURE_DIR;
+  return (args) => {
+    if (!isEnabled(options.enabled)) return;
+    try {
+      writeCapture(dir, {
+        document: print(args.document),
+        operationName: args.operationName ?? null,
+        variables: args.variableValues ?? null,
+        source: options.source?.((args.contextValue as Record<string, unknown> | undefined) ?? {}),
+        identity: options.identity?.((args.contextValue as Record<string, unknown> | undefined) ?? {}),
+      });
+    } catch {
+      // never break a subscription because of coverage capture
+    }
   };
 }
