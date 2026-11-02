@@ -14,6 +14,7 @@ import {
   isListType,
   isNonNullType,
   isObjectType,
+  isUnionType,
   Kind,
   parse,
   TypeInfo,
@@ -30,6 +31,7 @@ import { attributeSubgraphs, subgraphsFromSdls, subgraphsFromSupergraph } from "
 import { applyUsage } from "./usage.js";
 import { resolvePersisted, type PersistedManifest } from "./persisted.js";
 import type {
+  AbstractTypeCoverage,
   CapturedOperation,
   CoverageOptions,
   CoverageReport,
@@ -101,6 +103,12 @@ export function emptyReport(schemaInput: string | object | GraphQLSchema, option
     }
   }
   markEnumReachability(schema, types, inputTypes, enums);
+  const abstractTypes: Record<string, AbstractTypeCoverage> = {};
+  for (const type of Object.values(schema.getTypeMap())) {
+    if ((!isInterfaceType(type) && !isUnionType(type)) || ex.isExcluded(type.name)) continue;
+    const possible = schema.getPossibleTypes(type).filter((t) => types[t.name]);
+    abstractTypes[type.name] = { kind: isUnionType(type) ? "UNION" : "INTERFACE", seen: 0, possible: Object.fromEntries(possible.map((t) => [t.name, 0])) };
+  }
 
   const report: CoverageReport = {
     version: 1,
@@ -113,6 +121,7 @@ export function emptyReport(schemaInput: string | object | GraphQLSchema, option
     inputTypes,
     enums,
     argumentValues,
+    abstractTypes,
   };
   return report;
 }
@@ -215,7 +224,16 @@ export function summarise(r: Pick<CoverageReport, "types" | "inputTypes" | "enum
 }
 
 /** Walk a runtime value against its input type, recording input-field presence, enum values and value classes. */
-export function walkInputValue(report: CoverageReport, type: GraphQLInputType, value: unknown, into?: ValueClasses): void {
+/** Add a test name to an element's sorted `tests` list. */
+export function tagTest(el: { tests?: string[] }, test: string | undefined): void {
+  if (!test) return;
+  const tests = (el.tests ??= []);
+  if (tests.includes(test)) return;
+  tests.push(test);
+  tests.sort();
+}
+
+export function walkInputValue(report: CoverageReport, type: GraphQLInputType, value: unknown, into?: ValueClasses, test?: string): void {
   if (isNonNullType(type)) type = (type as GraphQLNonNull<GraphQLInputType>).ofType;
   const list = isListType(type);
   // GraphQL input coercion: a single value for a list type is a list of one, and is classified as such.
@@ -225,13 +243,17 @@ export function walkInputValue(report: CoverageReport, type: GraphQLInputType, v
 
   if (list) {
     const inner = (type as GraphQLList<GraphQLInputType>).ofType;
-    for (const item of value as unknown[]) walkInputValue(report, inner, item, into);
+    for (const item of value as unknown[]) walkInputValue(report, inner, item, into, test);
     return;
   }
   if (isEnumType(type)) {
     // Values arrive as the client wrote them (variables as JSON, literals untyped), so an enum value is its name.
     const ec = report.enums[(type as GraphQLEnumType).name];
-    if (typeof value === "string" && ec?.values[value]) ec.values[value].hits++;
+    const ev = typeof value === "string" ? ec?.values[value] : undefined;
+    if (ev) {
+      ev.hits++;
+      tagTest(ev, test);
+    }
     return;
   }
   if (isInputObjectType(type)) {
@@ -245,7 +267,8 @@ export function walkInputValue(report: CoverageReport, type: GraphQLInputType, v
       if (!fc) continue;
       if (Object.prototype.hasOwnProperty.call(obj, field.name) && obj[field.name] !== undefined) {
         fc.sent++;
-        walkInputValue(report, field.type, obj[field.name], fc.values);
+        tagTest(fc, test);
+        walkInputValue(report, field.type, obj[field.name], fc.values, test);
       } else {
         fc.omitted++;
       }
@@ -283,13 +306,18 @@ export function recordOperation(report: CoverageReport, schema: GraphQLSchema, o
   const typeInfo = new TypeInfo(schema);
 
   const wanted = op.operationName ?? null;
-  const operations = doc.definitions.filter((d): d is OperationDefinitionNode => d.kind === Kind.OPERATION_DEFINITION);
+  const operations = doc.definitions.filter((d): d is OperationDefinitionNode => d.kind === Kind.OPERATION_DEFINITION && (!wanted || d.name?.value === wanted));
+  if (operations.length === 0) {
+    // A server rejects this request, so none of it (fragments included) counts as covered.
+    report.operations.invalid++;
+    return { valid: false, errors: [`no operation named "${wanted}" in the document`] };
+  }
   for (const def of operations) {
-    if (wanted && def.name?.value !== wanted) continue;
     report.operations.total++;
     report.operations[def.operation]++;
     const name = def.name?.value ?? "(anonymous)";
     report.operations.named[name] = (report.operations.named[name] ?? 0) + 1;
+    if (op.source) (report.tests ??= {})[op.source] = (report.tests[op.source] ?? 0) + 1;
   }
 
   visit(
@@ -309,6 +337,7 @@ export function recordOperation(report: CoverageReport, schema: GraphQLSchema, o
         const fc = tc.fields[fieldDef.name];
         if (!fc) return;
         fc.hits++;
+        tagTest(fc, op.source);
         const returned = getNamedType(getNullableType(fieldDef.type));
         const rt = report.types[returned.name];
         if (rt) rt.hits++;
@@ -321,8 +350,9 @@ export function recordOperation(report: CoverageReport, schema: GraphQLSchema, o
           const value = valueFromASTUntyped(argNode.value, variables);
           if (value === undefined) continue; // variable not supplied: argument effectively absent
           ac.hits++;
+          tagTest(ac, op.source);
           const vc = report.argumentValues[`${parent.name}.${fieldDef.name}(${argNode.name.value})`];
-          walkInputValue(report, argDef.type, value, vc);
+          walkInputValue(report, argDef.type, value, vc, op.source);
         }
       },
       FragmentDefinition(node) {
@@ -336,7 +366,48 @@ export function recordOperation(report: CoverageReport, schema: GraphQLSchema, o
     if (!ec) continue;
     for (const v of new Set(values)) if (ec.values[v]) ec.values[v].observed++;
   }
+  if (op.responseValues) report.operations.responses = (report.operations.responses ?? 0) + 1;
+  for (const [path, outcomes] of Object.entries(op.responseValues ?? {})) {
+    const dot = path.indexOf(".");
+    const fc = report.types[path.slice(0, dot)]?.fields[path.slice(dot + 1)];
+    if (!fc) continue;
+    const returned = (fc.returned ??= { value: 0, null: 0, empty: 0 });
+    for (const o of new Set(outcomes)) returned[o]++;
+  }
+  for (const [name, concrete] of Object.entries(op.responseTypes ?? {})) {
+    const at = report.abstractTypes?.[name];
+    if (!at) continue;
+    at.seen++;
+    for (const t of new Set(concrete)) if (at.possible[t] !== undefined) at.possible[t]++;
+  }
   return { valid: true, errors: [] };
+}
+
+/**
+ * The two response-based numbers, set on the summary only when some capture carried response data:
+ * requested fields that came back with a value, and possible types of the interfaces and unions seen in responses.
+ */
+export function summariseResponses(report: CoverageReport): void {
+  delete report.summary.fieldsReturned;
+  delete report.summary.possibleTypes;
+  if (!report.operations.responses) return;
+  let fC = 0, fT = 0, pC = 0, pT = 0;
+  for (const t of Object.values(report.types))
+    for (const f of Object.values(t.fields)) {
+      if (!f.returned) continue;
+      fT++;
+      if (f.returned.value > 0) fC++;
+    }
+  for (const at of Object.values(report.abstractTypes ?? {})) {
+    if (!at.seen) continue;
+    for (const n of Object.values(at.possible)) {
+      pT++;
+      if (n > 0) pC++;
+    }
+  }
+  // Each number appears only when there is something to count: 0 of 0 would read as a perfect score.
+  if (fT) report.summary.fieldsReturned = ratio(fC, fT);
+  if (pT) report.summary.possibleTypes = ratio(pC, pT);
 }
 
 export interface ComputeOptions extends CoverageOptions {
@@ -364,6 +435,7 @@ export function computeCoverage(
   if (run) report.run = run;
   for (const op of resolvePersisted([...operations], persisted)) recordOperation(report, schema, op);
   report.summary = summarise(report);
+  summariseResponses(report);
   const membership = subgraphSdls && Object.keys(subgraphSdls).length ? subgraphsFromSdls(subgraphSdls) : subgraphsFromSupergraph(schema);
   if (membership) attributeSubgraphs(report, membership);
   if (usage) applyUsage(report, usage);

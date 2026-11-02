@@ -1,7 +1,8 @@
 import { isFederationInternal } from "./federation.js";
 import type { CoverageOptions } from "./types.js";
 
-function globToRegExp(glob: string): RegExp {
+/** "Type.field*" style patterns: `*` matches within one segment, `**` across segments. */
+export function globToRegExp(glob: string): RegExp {
   const escaped = glob.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*\*/g, "\u0000").replace(/\*/g, "[^.()]*").replace(/\u0000/g, ".*");
   return new RegExp(`^${escaped}$`);
 }

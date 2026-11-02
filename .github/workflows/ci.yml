@@ -15,7 +15,15 @@ jobs:
         run: npm run test:coverage
       - name: Example E2E loop (capture, report, gate)
         run: cd examples/yoga-e2e && npm run e2e
+      - name: The gqlcov Action itself, on the example report (job summary only)
+        uses: ./
+        with:
+          report: examples/yoga-e2e/.gqlcov/report.json
+          cli: node packages/cli/dist/bin.js
+          comment: "false"
       - uses: actions/upload-artifact@v4
         with:
           name: example-gqlcov-report
           path: examples/yoga-e2e/.gqlcov/report.*
+          include-hidden-files: true   # the report lives in .gqlcov/, which upload-artifact skips by default
+          if-no-files-found: error

@@ -48,16 +48,20 @@ describe("Apollo GraphOS", () => {
 
   it("turns the usage report into Type.field counts", async () => {
     const f = fake(() => ({ data: { graph: { variant: { schemaCoordinateInsightsUsageReport: { records: [
-      { namedType: "Query", namedAttribute: "players", referencingOperationCount: "120", estimatedExecutionCount: 130, used: true },
-      { namedType: "Player", namedAttribute: "name", referencingOperationCount: 0, estimatedExecutionCount: 0, used: false },
+      { namedType: "Query", namedAttribute: "players", coordinateKind: "OBJECT_FIELD", referencingOperationCount: "120", estimatedExecutionCount: 130, used: true },
+      { namedType: "Player", namedAttribute: "name", coordinateKind: "OBJECT_FIELD", referencingOperationCount: 0, estimatedExecutionCount: 0, used: false },
+      { namedType: "PlayerFilter", namedAttribute: "club", coordinateKind: "INPUT_OBJECT_FIELD", referencingOperationCount: 12, estimatedExecutionCount: 0, used: true },
+      { namedType: "Surface", namedAttribute: "CLAY", coordinateKind: "ENUM_VALUE", referencingOperationCount: 4, estimatedExecutionCount: 0, used: true },
     ] } } } } }));
     const u = await fetchApolloUsage("g@current", { apiKey: "k", fetchImpl: f.fetchImpl, since: "-86400" });
-    expect(u.fields).toEqual({ "Query.players": 120, "Player.name": 0 });
+    expect(u.fields).toEqual({ "Query.players": 120, "Player.name": 0, "PlayerFilter.club": 12, "Surface.CLAY": 4 });
+    expect(String(f.calls[0].body.query)).toContain("coordinateKinds: [OBJECT_FIELD, INPUT_OBJECT_FIELD, ENUM_VALUE]");
     expect(u.source).toBe("apollo g@current (requests)");
     expect(new Date(u.to!).getTime() - new Date(u.from!).getTime()).toBeCloseTo(86400 * 1000, -3);
     expect(f.calls[0].body.variables).toMatchObject({ since: "-86400", limit: 20000 });
     const ex = await fetchApolloUsage("g", { apiKey: "k", fetchImpl: f.fetchImpl, metric: "executions", since: "2026-10-01T00:00:00Z" });
     expect(ex.fields["Query.players"]).toBe(130);
+    expect(ex.fields["PlayerFilter.club"]).toBe(12); // inputs have no executions: requests are used
     expect(ex.from).toBe("2026-10-01T00:00:00Z");
   });
 });

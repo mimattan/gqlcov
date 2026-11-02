@@ -4,9 +4,8 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildSchema, getIntrospectionQuery, graphqlSync } from "graphql";
-import { writeCapture, type CoverageReport } from "@gqlcov/core";
+import { computeCoverage, writeCapture, type CoverageReport } from "@gqlcov/core";
 import { buildCli } from "../src/index.js";
-import { fmtRequests } from "../src/format.js";
 
 const sdl = /* GraphQL */ `
 enum Surface { CLAY HARD }
@@ -42,9 +41,13 @@ function startServer(): Promise<void> {
         return send(200, graphqlSync({ schema, source: json.query }));
       }
       if (req.url === "/no-introspection") return send(200, { errors: [{ message: "introspection is disabled" }] });
+      if (req.url!.startsWith("/gh/")) {
+        if (req.method === "GET") return send(200, []);
+        return send(201, { html_url: `https://github.com/o/r/pull/7#${json.body.length}` });
+      }
       if (req.url === "/apollo") {
         if (json.query.includes("GqlcovFieldUsage"))
-          return send(200, { data: { graph: { variant: { schemaCoordinateInsightsUsageReport: { records: [{ namedType: "Query", namedAttribute: "clubs", referencingOperationCount: 120000, estimatedExecutionCount: 9, used: true }] } } } } });
+          return send(200, { data: { graph: { variant: { schemaCoordinateInsightsUsageReport: { records: [{ namedType: "Query", namedAttribute: "clubs", coordinateKind: "OBJECT_FIELD", referencingOperationCount: 120000, estimatedExecutionCount: 9, used: true }, { namedType: "CourtFilter", namedAttribute: "indoor", coordinateKind: "INPUT_OBJECT_FIELD", referencingOperationCount: 300, estimatedExecutionCount: 0, used: true }] } } } } });
         return send(200, { data: { graph: { variants: [{ name: "current" }], variant: { latestApprovedLaunch: null, latestPublication: { schema: { document: sdl } } } } } });
       }
       const method = req.url!.split("/").pop();
@@ -69,21 +72,22 @@ beforeAll(async () => {
   writeFileSync(at("courts.graphql"), courtsSdl);
   writeFileSync(at("introspection.json"), JSON.stringify(graphqlSync({ schema: buildSchema(sdl), source: getIntrospectionQuery() })));
   const caps = at("captures");
-  writeCapture(caps, { document: `query Clubs { clubs { id name courts(filter: { surface: CLAY }) { id status } } }`, responseEnums: { Status: ["OPEN"] } });
-  writeCapture(caps, { document: `mutation Rename { renameClub(id: "1", name: "x") { id } }` });
+  writeCapture(caps, { document: `query Clubs { clubs { id name courts(filter: { surface: CLAY }) { id status } } }`, responseEnums: { Status: ["OPEN"] }, source: "club list" });
+  writeCapture(caps, { document: `mutation Rename { renameClub(id: "1", name: "x") { id } }`, source: "rename club" });
+  writeCapture(caps, { document: `query Again { clubs { id } }`, source: "club list again", responseValues: { "Query.clubs": ["value"], "Club.id": ["value"] } });
   writeCapture(caps, { document: `{ nope }` });
   writeCapture(caps, { persistedId: "p1" });
   writeCapture(caps, { persistedId: "p2" });
   writeFileSync(at("manifest.json"), JSON.stringify({ p1: `query Club { club(id: "1") { name } }` }));
   const many = Object.fromEntries(Array.from({ length: 30 }, (_, i) => [`Gone.f${i}`, i + 1]));
-  writeFileSync(at("usage.json"), JSON.stringify({ source: "hand-made", from: "2026-10-01T00:00:00Z", to: "2026-10-31T00:00:00Z", fields: { ...many, "Court.surface": 2_500_000, "Query.clubs": 3 } }));
+  writeFileSync(at("usage.json"), JSON.stringify({ source: "hand-made", from: "2026-10-01T00:00:00Z", to: "2026-10-31T00:00:00Z", fields: { ...many, "Court.surface": 2_500_000, "Query.clubs": 3, "CourtFilter.indoor": 50, "Surface.HARD": 9, "CourtFilter.surface": 3 } }));
   writeFileSync(at("usage-many.json"), JSON.stringify(Object.fromEntries(["Query.club", "Mutation.renameClub", "Court.surface", "Court.status", "Club.name", "Club.id", "Club.courts", "Court.id", "Query.clubs"].flatMap((f, i) => Array.from({ length: 4 }, (_, j) => [`${f}${j ? `x${j}` : ""}`, i + j + 1])))));
   await startServer();
 });
 afterAll(() => new Promise<void>((r) => server.close(() => r())));
 afterEach(() => {
   process.exitCode = undefined;
-  for (const k of ["APOLLO_KEY", "APOLLO_REGISTRY_URL", "COSMO_API_KEY", "COSMO_API_URL", "GITHUB_SHA", "GITHUB_REF_NAME"]) {
+  for (const k of ["APOLLO_KEY", "APOLLO_REGISTRY_URL", "COSMO_API_KEY", "COSMO_API_URL", "GITHUB_SHA", "GITHUB_REF_NAME", "GITHUB_API_URL", "GITHUB_EVENT_PATH"]) {
     if (saved[k] === undefined) delete process.env[k];
     else process.env[k] = saved[k];
   }
@@ -114,13 +118,22 @@ describe("gqlcov report", () => {
     const r = await cli("report", "-s", at("schema.graphql"), "-c", at("captures"), "-o", at("full", "report.json"), "--html", at("full", "report.html"),
       "--lcov", at("full", "lcov.info"), "--istanbul", at("full", "coverage.json"), "--subgraph", `clubs=${at("clubs.graphql")}`, `courts=${at("courts.graphql")}`,
       "--usage", at("usage.json"), "--persisted", at("manifest.json"), "--untested", "--include-deprecated", "--exclude", "Mutation.*");
-    expect(r.out).toContain("gqlcov: 3 operations (2 queries, 1 mutations, 0 subscriptions, 1 invalid, 1 unresolved persisted ids)");
+    expect(r.out).toContain("gqlcov: 4 operations (3 queries, 1 mutations, 0 subscriptions, 1 invalid, 1 unresolved persisted ids)");
     expect(r.out).toMatch(/clubs\s+\d+(\.\d+)?% \(\d+\/\d+\)/);
     expect(r.out).toContain("production usage (hand-made, 2026-10-01 to 2026-10-31)");
-    expect(r.out).toMatch(/Court\.surface\s+2\.5M requests/);
+    expect(r.out).toMatch(/Court\.surface\s+2\.5M requests\n/);
+    expect(r.out).toMatch(/CourtFilter\.indoor\s+50 requests  \(input field\)/);
+    expect(r.out).toMatch(/Surface\.HARD\s+9 requests  \(enum value\)/);
+    expect(r.out).toMatch(/Production inputs sent by a test\s+33\.33%  \(1\/3\)/);
+    expect(r.out).toContain("3 input fields and enum values with traffic, 1 sent by a test");
+    const inputsGate = await cli("gate", at("full", "report.json"), "--min-used-inputs", "75");
+    expect(inputsGate.err).toContain("33.33% of input fields and enum values with production traffic are sent by a test, below the minimum 75% (2 untested: CourtFilter.indoor, Surface.HARD)");
     expect(r.out).toMatch(/in usage but not in the schema \(30\): .*, \.\.\./);
     expect(r.out).toContain("1 captures carried only a persisted id");
+    expect(r.out).toMatch(/Fields returning a value \(not gated\)\s+100%  \(2\/2\)/);
+    expect(r.out).not.toContain("Possible types returned"); // no interface or union came back: nothing to count
     expect(r.out).toMatch(/\n  fields \(\d+\):\n    /);
+    expect(r.out).toMatch(/\n  input fields \(\d+\):\n    /);
     const report = readJson(at("full", "report.json"));
     expect(report.run).toMatchObject({ sha: "abc123", branch: "feature" });
     expect(report.inputTypes.CourtFilter.fields.legacy).toBeDefined(); // --include-deprecated
@@ -192,8 +205,8 @@ describe("gqlcov usage", () => {
   it("writes GraphOS and Cosmo usage files", async () => {
     Object.assign(process.env, { APOLLO_KEY: "k", APOLLO_REGISTRY_URL: `${base}/apollo`, COSMO_API_KEY: "k", COSMO_API_URL: `${base}/cosmo` });
     const a = await cli("usage", "apollo", "club@current", "-o", at("u", "apollo.json"), "--metric", "executions", "--limit", "10", "--since", "2026-10-01T00:00:00Z");
-    expect(a.out).toMatch(/^gqlcov: 1 fields from apollo club@current \(estimated executions\), 2026-10-01 to \d{4}-\d\d-\d\d: /);
-    expect(JSON.parse(readFileSync(at("u", "apollo.json"), "utf8")).fields).toEqual({ "Query.clubs": 9 });
+    expect(a.out).toMatch(/^gqlcov: 2 fields from apollo club@current \(estimated executions\), 2026-10-01 to \d{4}-\d\d-\d\d: /);
+    expect(JSON.parse(readFileSync(at("u", "apollo.json"), "utf8")).fields).toEqual({ "Query.clubs": 9, "CourtFilter.indoor": 300 });
     const c = await cli("usage", "cosmo", "club", "-o", at("u", "cosmo.json"), "--range", "48");
     expect(c.out).toContain("gqlcov: 1 fields from cosmo default/club (requests), 2026-10-01 to 2026-10-31");
     await cli("usage", "cosmo", "club", "-o", at("u", "cosmo2.json"), "--from", "2026-10-01T00:00:00Z", "--to", "2026-10-31T00:00:00Z");
@@ -202,6 +215,62 @@ describe("gqlcov usage", () => {
 
   it("rejects an unknown metric", async () => {
     await expect(cli("usage", "apollo", "club", "--metric", "latency")).rejects.toThrow("--metric must be requests or executions");
+  });
+});
+
+describe("gqlcov tests", () => {
+  let path: string;
+  beforeAll(async () => {
+    await cli("report", "-q", "-s", at("schema.graphql"), "-c", at("captures"), "-o", (path = at("t", "report.json")));
+  });
+
+  it("prints coverage per test and points out tests that add nothing", async () => {
+    const r = await cli("tests", path);
+    expect(r.out).toMatch(/^  Test\s+Ops\s+Fields\s+Args\s+Inputs\s+Enums\s+Only$/m);
+    expect(r.out).toMatch(/^  club list\s+1\s+6\s+1\s+1\s+1\s+\d+$/m);
+    expect(r.out).toMatch(/^  club list again\s+1\s+2\s+0\s+0\s+0\s+0$/m);
+    expect(r.out).toContain("1 of 3 tests cover nothing the others do not");
+  });
+
+  it("lists everything one test covers, as text or JSON", async () => {
+    const r = await cli("tests", path, "--test", "rename club");
+    expect(r.out).toContain("rename club: 1 operations");
+    expect(r.out).toContain("covered by this test only (3):\n    Mutation.renameClub\n");
+    expect(r.out).toContain("  input fields (0)\n");
+    const json = JSON.parse((await cli("tests", path, "--test", "rename club", "--json")).out);
+    expect(json.arguments).toEqual(["Mutation.renameClub(id)", "Mutation.renameClub(name)"]);
+    expect(JSON.parse((await cli("tests", path, "--json")).out)).toHaveLength(3);
+  });
+
+  it("explains unknown tests and reports without test names", async () => {
+    await expect(cli("tests", path, "--test", "nope")).rejects.toThrow('no test named "nope" in the report (tests: club list, club list again, rename club)');
+    await cli("report", "-q", "-s", at("schema.graphql"), "-c", at("empty"), "-o", at("t", "empty.json"));
+    expect((await cli("tests", at("t", "empty.json"))).out).toContain("the report has no test names");
+    await expect(cli("tests", at("t", "empty.json"), "--test", "x")).rejects.toThrow(/^no test named "x" in the report$/);
+  });
+});
+
+describe("gqlcov markdown and comment", () => {
+  let head: string;
+  let base: string;
+  beforeAll(async () => {
+    await cli("report", "-q", "-s", at("schema.graphql"), "-c", at("captures"), "-o", (head = at("md", "head.json")));
+    await cli("report", "-q", "-s", at("schema.graphql"), "-c", at("empty"), "-o", (base = at("md", "base.json")));
+  });
+
+  it("prints a summary, or a comparison when the base report exists", async () => {
+    expect((await cli("markdown", head)).out).toContain("| Metric | Coverage | Covered |");
+    expect((await cli("markdown", head, "--base", at("md", "missing.json"))).out).toContain("| Metric | Coverage | Covered |");
+    await cli("markdown", head, "--base", base, "-o", at("md", "out.md"));
+    expect(readFileSync(at("md", "out.md"), "utf8")).toContain("<summary>Newly covered (");
+  });
+
+  it("posts the summary as a pull request comment, or says why it did not", async () => {
+    process.env.GITHUB_API_URL = `http://127.0.0.1:${(server.address() as { port: number }).port}/gh`;
+    const posted = await cli("comment", at("md", "out.md"), "--token", "t", "--repo", "o/r", "--pr", "7", "--id", "api");
+    expect(posted.out).toMatch(/^gqlcov: comment created: https:\/\/github.com\/o\/r\/pull\/7#\d+$/);
+    delete process.env.GITHUB_EVENT_PATH;
+    expect((await cli("comment", at("md", "out.md"), "--token", "t", "--repo", "o/r")).out).toBe("gqlcov: comment skipped: not a pull request");
   });
 });
 
@@ -216,8 +285,8 @@ describe("gqlcov merge, diff and gate", () => {
 
   it("merges shards", async () => {
     const r = await cli("merge", fullPath, shortPath, "-o", at("g", "merged.json"));
-    expect(r.out).toContain("gqlcov: 2 operations");
-    expect(readJson(at("g", "merged.json")).operations.total).toBe(2);
+    expect(r.out).toContain("gqlcov: 3 operations");
+    expect(readJson(at("g", "merged.json")).operations.total).toBe(3);
   });
 
   it("diffs as text with per-subgraph deltas, and as JSON", async () => {
@@ -248,6 +317,24 @@ describe("gqlcov merge, diff and gate", () => {
     const used = await cli("gate", fullPath, "--min-used-fields", "99");
     expect(used.err).toMatch(/of fields with production traffic are tested/);
     expect((await cli("gate", fullPath)).out).toContain("gate: passed");
+    const required = await cli("gate", fullPath, "--require", "Mutation.*", "Query.clubs");
+    expect(required.code).toBe(0);
+    const missing = await cli("gate", fullPath, "--require", "Query.*", "Nope.*");
+    expect(missing.code).toBe(1);
+    expect(missing.err).toContain('required "Query.*": 1 of 2 not covered: Query.club');
+    expect(missing.err).toContain('required "Nope.*" matches nothing in the report');
+    const firstRun = await cli("gate", fullPath, "--base", at("g", "no-base-yet.json"));
+    expect(firstRun.out).toContain(`base report ${at("g", "no-base-yet.json")} not found: skipping the no-decrease check`);
+    expect(firstRun.code).toBe(0);
+  });
+
+  it("prints the possible-types number when responses showed an interface", async () => {
+    const r = computeCoverage(`interface N { id: ID! } type A implements N { id: ID! } type B implements N { id: ID! } type Query { n: N }`, [
+      { document: `{ n { __typename id } }`, responseValues: { "Query.n": ["value"], "N.id": ["value"] }, responseTypes: { N: ["A"] } },
+    ]);
+    writeFileSync(at("g", "abstract.json"), JSON.stringify(r));
+    const out = await cli("gate", at("g", "abstract.json"));
+    expect(out.out).toMatch(/Possible types returned \(not gated\)\s+50%  \(1\/2\)/);
   });
 
   it("prints older reports without the observed or usage numbers", async () => {
@@ -261,8 +348,3 @@ describe("gqlcov merge, diff and gate", () => {
   });
 });
 
-describe("request counts", () => {
-  it("formats plain numbers, thousands and millions", () => {
-    expect([fmtRequests(950), fmtRequests(9999), fmtRequests(15_400), fmtRequests(2_460_000)]).toEqual(["950", "9999", "15k", "2.5M"]);
-  });
-});

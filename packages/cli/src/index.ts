@@ -1,10 +1,10 @@
 import { Command } from "commander";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { computeCoverage, diffReports, gate, mergeReports, parsePersistedManifest, parseUsage, readCaptures, uncovered, toIstanbul, toLcov, DEFAULT_CAPTURE_DIR, type CoverageReport } from "@gqlcov/core";
+import { computeCoverage, diffReports, fmtRequests, gate, mergeReports, parsePersistedManifest, parseUsage, readCaptures, testCoverage, toMarkdown, uncovered, toIstanbul, toLcov, DEFAULT_CAPTURE_DIR, type CoverageReport } from "@gqlcov/core";
 import { renderHtml } from "./html.js";
-import { fmtRequests } from "./format.js";
 import { isRemotePointer as isRemote, loadSchema } from "./schema-source.js";
+import { upsertPrComment } from "./github.js";
 import { fetchApolloUsage, fetchCosmoUsage } from "./registry.js";
 
 const { version } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
@@ -26,7 +26,10 @@ function printSummary(r: CoverageReport): void {
   console.log(line("Enum values sent", s.enumValues));
   // Older reports have no observed number.
   if (s.enumValuesObserved) console.log(line("Enum values in responses (not gated)", s.enumValuesObserved));
+  if (s.fieldsReturned) console.log(line("Fields returning a value (not gated)", s.fieldsReturned));
+  if (s.possibleTypes) console.log(line("Possible types returned (not gated)", s.possibleTypes));
   if (r.usage) console.log(line("Production fields tested", r.usage.usedFields));
+  if (r.usage?.usedInputs) console.log(line("Production inputs sent by a test", r.usage.usedInputs));
   printSubgraphs(r);
 }
 
@@ -35,10 +38,11 @@ function printUsage(r: CoverageReport): void {
   const u = r.usage;
   if (!u) return;
   const where = [u.source, u.from && u.to ? `${u.from.slice(0, 10)} to ${u.to.slice(0, 10)}` : undefined].filter(Boolean).join(", ");
-  console.log(`\n  production usage${where ? ` (${where})` : ""}: ${u.usedFields.total} fields with traffic, ${u.usedFields.covered} tested, ${u.testedUnused.length} tested without traffic, ${u.unusedUntested.length} neither`);
+  const inputs = u.usedInputs ? `, ${u.usedInputs.total} input fields and enum values with traffic, ${u.usedInputs.covered} sent by a test` : "";
+  console.log(`\n  production usage${where ? ` (${where})` : ""}: ${u.usedFields.total} fields with traffic, ${u.usedFields.covered} tested${inputs}, ${u.testedUnused.length} tested without traffic, ${u.unusedUntested.length} neither`);
   if (u.untestedUsed.length) {
     console.log(`  used in production, never tested (${u.untestedUsed.length}):`);
-    for (const x of u.untestedUsed.slice(0, 25)) console.log(`    ${x.path.padEnd(44)} ${fmtRequests(x.requests).padStart(8)} requests`);
+    for (const x of u.untestedUsed.slice(0, 25)) console.log(`    ${x.path.padEnd(44)} ${fmtRequests(x.requests).padStart(8)} requests${x.kind === "field" ? "" : x.kind === "inputField" ? "  (input field)" : "  (enum value)"}`);
     if (u.untestedUsed.length > 25) console.log(`    ... and ${u.untestedUsed.length - 25} more`);
   }
   if (u.unknown.length) console.log(`  in usage but not in the schema (${u.unknown.length}): ${u.unknown.slice(0, 10).join(", ")}${u.unknown.length > 10 ? ", ..." : ""}`);
@@ -125,7 +129,8 @@ export function buildCli(): Command {
         console.log(`  report: ${o.out}${o.html ? `, html: ${o.html}` : ""}${o.lcov ? `, lcov: ${o.lcov}` : ""}${o.istanbul ? `, istanbul: ${o.istanbul}` : ""}`);
         if (o.untested) {
           const u = uncovered(report);
-          for (const [k, v] of Object.entries(u)) if (v.length) console.log(`\n  ${k} (${v.length}):\n    ${v.join("\n    ")}`);
+          const titles: Record<keyof typeof u, string> = { fields: "fields", arguments: "arguments", inputFields: "input fields", enumValues: "enum values", neverReturned: "requested, but never returned a value", possibleTypes: "possible types never returned" };
+          for (const [k, v] of Object.entries(u)) if (v.length) console.log(`\n  ${titles[k as keyof typeof u]} (${v.length}):\n    ${v.join("\n    ")}`);
         }
       }
     });
@@ -160,6 +165,61 @@ export function buildCli(): Command {
     });
 
   program
+    .command("markdown")
+    .description("Markdown summary for a pull request comment or job summary; with --base, the change and what was lost")
+    .argument("<report>", "report JSON")
+    .option("--base <report>", "base report to compare against (a missing file is ignored, for the first run)")
+    .option("-o, --out <file>", "write to a file instead of printing")
+    .action((reportPath: string, o) => {
+      const base = o.base && existsSync(o.base) ? readReport(o.base) : undefined;
+      const md = toMarkdown(readReport(reportPath), base);
+      if (o.out) writeOut(o.out, md);
+      else console.log(md);
+    });
+
+  program
+    .command("comment")
+    .description("Create or update gqlcov's comment on the current pull request (GitHub Actions)")
+    .argument("<file>", "Markdown file, e.g. from gqlcov markdown")
+    .option("--id <name>", "keep a separate comment per id, for several reports on one pull request")
+    .option("--token <token>", "GitHub token (default GITHUB_TOKEN)")
+    .option("--repo <owner/name>", "repository (default GITHUB_REPOSITORY)")
+    .option("--pr <number>", "pull request number (default: from the GitHub Actions event)", (v: string) => parseInt(v, 10))
+    .action(async (file: string, o) => {
+      const r = await upsertPrComment({ body: readFileSync(file, "utf8"), id: o.id, token: o.token, repo: o.repo, pr: o.pr });
+      console.log(r.action === "skipped" ? `gqlcov: comment skipped: ${r.reason}` : `gqlcov: comment ${r.action}: ${r.url}`);
+    });
+
+  program
+    .command("tests")
+    .description("Coverage per test, from the source label each capture carries")
+    .argument("<report>", "report JSON")
+    .option("--test <name>", "list everything one test covers")
+    .option("--json", "print as JSON")
+    .action((reportPath: string, o) => {
+      const list = testCoverage(readReport(reportPath));
+      const one = o.test === undefined ? undefined : list.find((t) => t.name === o.test);
+      if (o.test !== undefined && !one) throw new Error(`no test named "${o.test}" in the report${list.length ? ` (tests: ${list.map((t) => t.name).join(", ")})` : ""}`);
+      if (o.json) return console.log(JSON.stringify(one ?? list, null, 2));
+      if (one) {
+        console.log(`${one.name}: ${one.operations} operations`);
+        const show = (title: string, items: string[]) => console.log(`\n  ${title} (${items.length})${items.length ? `:\n    ${items.join("\n    ")}` : ""}`);
+        show("covered by this test only", one.unique);
+        show("fields", one.fields);
+        show("arguments", one.arguments);
+        show("input fields", one.inputFields);
+        show("enum values", one.enumValues);
+        return;
+      }
+      if (!list.length) return console.log("gqlcov: the report has no test names. Give captures a source label (the capture plugins' source option).");
+      const w = Math.max(4, ...list.map((t) => t.name.length));
+      console.log(`  ${"Test".padEnd(w)}  ${"Ops".padStart(5)}  ${"Fields".padStart(6)}  ${"Args".padStart(5)}  ${"Inputs".padStart(6)}  ${"Enums".padStart(5)}  ${"Only".padStart(5)}`);
+      for (const t of list) console.log(`  ${t.name.padEnd(w)}  ${String(t.operations).padStart(5)}  ${String(t.fields.length).padStart(6)}  ${String(t.arguments.length).padStart(5)}  ${String(t.inputFields.length).padStart(6)}  ${String(t.enumValues.length).padStart(5)}  ${String(t.unique.length).padStart(5)}`);
+      const redundant = list.filter((t) => t.unique.length === 0);
+      if (redundant.length) console.log(`\n  ${redundant.length} of ${list.length} tests cover nothing the others do not ("Only" is 0).`);
+    });
+
+  program
     .command("merge")
     .description("Merge reports from parallel shards")
     .argument("<reports...>", "report JSON files")
@@ -179,7 +239,7 @@ export function buildCli(): Command {
     .action((base: string, head: string, o) => {
       const d = diffReports(readReport(base), readReport(head));
       if (o.json) return console.log(JSON.stringify(d, null, 2));
-      for (const [k, v] of Object.entries(d.delta)) console.log(`  ${k.padEnd(24)} ${d.base.summary[k as keyof typeof d.base.summary].percent}% -> ${d.head.summary[k as keyof typeof d.head.summary].percent}% (${v >= 0 ? "+" : ""}${v})`);
+      for (const [k, v] of Object.entries(d.delta)) console.log(`  ${k.padEnd(24)} ${d.base.summary[k as keyof typeof d.base.summary]!.percent}% -> ${d.head.summary[k as keyof typeof d.head.summary]!.percent}% (${v >= 0 ? "+" : ""}${v})`);
       const show = (t: string, l: string[]) => l.length && console.log(`\n  ${t} (${l.length}):\n    ${l.join("\n    ")}`);
       for (const [name, delta] of Object.entries(d.subgraphs ?? {})) {
         console.log(`\n  subgraph ${name}`);
@@ -198,20 +258,26 @@ export function buildCli(): Command {
     .option("--min-fields <pct>", "minimum output-field coverage", parseFloat)
     .option("--min-input-fields <pct>", "minimum input-field coverage", parseFloat)
     .option("--min-enum-values <pct>", "minimum coverage of enum values sent as input", parseFloat)
-    .option("--base <report>", "fail on any decrease versus this report")
+    .option("--base <report>", "fail on any decrease versus this report (a missing file skips this check, for the first run)")
     .option("--tolerance <points>", "allowed decrease in percentage points", parseFloat, 0)
     .option("--subgraph <name...>", "apply the thresholds to these subgraphs instead of the whole schema; * for every subgraph")
     .option("--min-used-fields <pct>", "minimum share of fields with production traffic that are tested (report needs --usage)", parseFloat)
+    .option("--require <pattern...>", "every element matching these patterns must be covered, e.g. 'Mutation.*' 'Query.payment*' (same syntax as --exclude)")
+    .option("--min-used-inputs <pct>", "minimum share of input fields and enum values with production traffic that a test sent (usage must cover inputs)", parseFloat)
     .action((reportPath: string, o) => {
       const report = readReport(reportPath);
+      const baseMissing = o.base !== undefined && !existsSync(o.base);
+      if (baseMissing) console.log(`  base report ${o.base} not found: skipping the no-decrease check`);
       const result = gate(report, {
         minFields: o.minFields,
         minInputFields: o.minInputFields,
         minEnumValues: o.minEnumValues,
-        base: o.base ? readReport(o.base) : undefined,
+        base: o.base && !baseMissing ? readReport(o.base) : undefined,
         tolerance: o.tolerance,
         subgraphs: o.subgraph,
         minUsedFields: o.minUsedFields,
+        minUsedInputs: o.minUsedInputs,
+        require: o.require,
       });
       printSummary(report);
       if (result.passed) return console.log("  gate: passed");

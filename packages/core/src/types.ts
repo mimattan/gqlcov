@@ -12,7 +12,14 @@ export interface CapturedOperation {
   source?: string;
   /** Enum values that appeared in the response data, by enum name. Server-side capture fills this; wire capture does not. */
   responseEnums?: Record<string, string[]>;
+  /** Per selected field ("ParentType.field"), what came back: a value, null, or an empty list. Server-side capture fills this. */
+  responseValues?: Record<string, ResponseOutcome[]>;
+  /** Per interface or union, the concrete types returned (from `__typename`, where selected). Server-side capture fills this. */
+  responseTypes?: Record<string, string[]>;
 }
+
+/** What a selected field came back as in one response. */
+export type ResponseOutcome = "value" | "null" | "empty";
 
 export interface RunInfo {
   id?: string;
@@ -33,6 +40,8 @@ export interface CoverageOptions {
 export interface ArgCoverage {
   hits: number;
   deprecated: boolean;
+  /** Tests (capture `source` labels) that passed this argument, sorted. Absent when no capture carried a source. */
+  tests?: string[];
 }
 
 export interface FieldCoverage {
@@ -43,6 +52,19 @@ export interface FieldCoverage {
   graphs?: string[];
   /** Production requests that selected this field in the usage window; set by `applyUsage`. */
   requests?: number;
+  /** Tests (capture `source` labels) that requested this field, sorted. */
+  tests?: string[];
+  /** Operations whose response had this field as a value, as null, or as an empty list. Absent without response data. */
+  returned?: Record<ResponseOutcome, number>;
+}
+
+/** An interface or union, and how often each of its possible types came back. */
+export interface AbstractTypeCoverage {
+  kind: "INTERFACE" | "UNION";
+  /** Operations whose response told which concrete types came back here (`__typename` selected). */
+  seen: number;
+  /** Possible (implementing or member) types, by operations that returned them. */
+  possible: Record<string, number>;
 }
 
 export interface TypeCoverage {
@@ -79,6 +101,10 @@ export interface InputFieldCoverage {
   required: boolean;
   values: ValueClasses;
   graphs?: string[];
+  /** Tests that sent this field, sorted. */
+  tests?: string[];
+  /** Production operations that sent this field in the usage window; set by `applyUsage`. */
+  requests?: number;
 }
 
 export interface InputTypeCoverage {
@@ -95,6 +121,10 @@ export interface EnumValueCoverage {
   observed: number;
   deprecated: boolean;
   graphs?: string[];
+  /** Tests that sent this value, sorted. */
+  tests?: string[];
+  /** Production operations that sent this value in the usage window; set by `applyUsage`. */
+  requests?: number;
 }
 
 export interface EnumCoverage {
@@ -124,10 +154,14 @@ export interface CoverageSummary {
   enumValues: Ratio;
   /** Values of output enums seen in at least one response. Reported, never gated. */
   enumValuesObserved: Ratio;
+  /** Requested fields with response data that came back with a value at least once. Present when captures carried responses; never gated. */
+  fieldsReturned?: Ratio;
+  /** Possible types of the interfaces and unions seen in responses that came back at least once. Present when captures carried responses; never gated. */
+  possibleTypes?: Ratio;
 }
 
 /** Summary keys that are informational only: excluded from the no-decrease gate. */
-export const UNGATED_SUMMARY_KEYS: readonly (keyof CoverageSummary)[] = ["enumValuesObserved"];
+export const UNGATED_SUMMARY_KEYS: readonly (keyof CoverageSummary)[] = ["enumValuesObserved", "fieldsReturned", "possibleTypes"];
 
 export interface OperationStats {
   total: number;
@@ -140,6 +174,8 @@ export interface OperationStats {
   invalid: number;
   /** Captures that carried only a persisted id no manifest or other capture could resolve. Absent in older reports. */
   unresolved?: number;
+  /** Operations whose capture carried response data (server-side capture). Absent when none did. */
+  responses?: number;
 }
 
 export interface CoverageReport {
@@ -159,9 +195,28 @@ export interface CoverageReport {
   subgraphs?: Record<string, CoverageSummary>;
   /** Join with production field usage, present when usage data was given. */
   usage?: UsageJoin;
+  /** Operations per test (capture `source` label). Absent when no capture carried a source. */
+  tests?: Record<string, number>;
+  /** Interfaces and unions with their possible types. Absent in older reports. */
+  abstractTypes?: Record<string, AbstractTypeCoverage>;
 }
 
-/** Production field usage, as `gqlcov usage apollo|cosmo` write it or hand-made: requests per "Type.field". */
+/** What one test covered, from the `tests` lists on each element. Paths as in `uncovered`. */
+export interface TestCoverage {
+  name: string;
+  operations: number;
+  fields: string[];
+  arguments: string[];
+  inputFields: string[];
+  enumValues: string[];
+  /** Elements no other test covers: removing this test loses them. */
+  unique: string[];
+}
+
+/**
+ * Production usage, as `gqlcov usage apollo|cosmo` write it or hand-made: requests per schema coordinate,
+ * "Type.field" for output fields, "Input.field" for input fields and "Enum.VALUE" for enum values.
+ */
 export interface UsageData {
   /** Where the numbers came from, e.g. "apollo my-graph@current". */
   source?: string;
@@ -171,17 +226,25 @@ export interface UsageData {
   fields: Record<string, number>;
 }
 
+/** What a usage path names: an output field, an input field, or a value of an enum a client can send. */
+export type UsageKind = "field" | "inputField" | "enumValue";
+
 export interface UsageJoin {
   source?: string;
   from?: string;
   to?: string;
   /** Output fields with production traffic: how many of them a test requested. */
   usedFields: Ratio;
+  /**
+   * Input fields and values of input enums with production traffic: how many of them a test sent. Present only
+   * when the usage data covers inputs (GraphOS does; Cosmo's bulk usage is output fields only).
+   */
+  usedInputs?: Ratio;
   /** Used in production, never tested: the risk list, most requested first. */
-  untestedUsed: { path: string; requests: number }[];
-  /** Tested but no production traffic in the window. */
+  untestedUsed: { path: string; requests: number; kind: UsageKind }[];
+  /** Tested but no production traffic in the window. Inputs are listed only when the usage data covers them. */
   testedUnused: string[];
-  /** Neither: deprecation candidates. */
+  /** Neither: deprecation candidates. Inputs are listed only when the usage data covers them. */
   unusedUntested: string[];
   /** Usage paths that are not in the (included) schema: removed fields still being called, or excluded ones. */
   unknown: string[];
@@ -213,6 +276,13 @@ export interface GateOptions {
   subgraphs?: string[];
   /** Minimum percent of fields with production traffic that are tested. Needs usage data in the report. */
   minUsedFields?: number;
+  /** Minimum percent of input fields and enum values with production traffic that a test sent. Needs usage data covering inputs. */
+  minUsedInputs?: number;
+  /**
+   * Patterns (as for `exclude`: "Mutation.*", "Query.payment*", "PaymentInput.*", "Currency.*") whose every matching
+   * element must be covered. A pattern that matches nothing fails too, so a typo cannot pass silently.
+   */
+  require?: string[];
 }
 
 export interface GateResult {

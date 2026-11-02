@@ -1,14 +1,16 @@
 export * from "./types.js";
-export { computeCoverage, emptyReport, recordOperation, summarise, walkInputValue } from "./coverage.js";
+export { computeCoverage, emptyReport, recordOperation, summarise, summariseResponses, tagTest, walkInputValue } from "./coverage.js";
+export { testCoverage } from "./tests.js";
 export { mergeReports } from "./merge.js";
 export { diffReports, gate, uncovered, coveredPaths } from "./diff.js";
 export { writeCapture, readCaptures, DEFAULT_CAPTURE_DIR } from "./capture.js";
 export { toSchema, schemaHash } from "./schema.js";
 export { classifyValue, emptyValueClasses, addValueClasses } from "./values.js";
 export { Excluder } from "./exclude.js";
-export { collectResponseEnums } from "./response.js";
+export { collectResponse, collectResponseEnums, type ResponseFacts } from "./response.js";
 export { toLcov, toIstanbul, schemaLineMap } from "./export.js";
 export { subgraphsFromSupergraph, subgraphsFromSdls, attributeSubgraphs, summariseSubgraphs, type SubgraphMembership } from "./subgraphs.js";
 export { isFederationInternal } from "./federation.js";
 export { applyUsage, parseUsage, summariseUsage } from "./usage.js";
 export { parsePersistedManifest, mergePersistedManifests, resolvePersisted, type PersistedManifest } from "./persisted.js";
+export { toMarkdown, fmtRequests } from "./markdown.js";
