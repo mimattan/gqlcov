@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { GraphQLEnumType, GraphQLInt, GraphQLObjectType, GraphQLSchema, Kind, parse, type DocumentNode } from "graphql";
-import { computeCoverage, diffReports, gate, mergeReports, parsePersistedManifest, schemaLineMap, summarise, summariseResponses, toLcov, uncovered, type CoverageReport } from "../src/index.js";
+import { computeCoverage, diffReports, gate, mergeReports, parsePersistedManifest, schemaLineMap, summarise, summariseResponses, toLcov, uncovered, type CapturedOperation, type CoverageReport } from "../src/index.js";
 
 const sdl = /* GraphQL */ `
   enum Surface { CLAY HARD GRASS @deprecated(reason: "gone") }
@@ -250,7 +250,7 @@ describe("response-aware coverage", () => {
     union Thing = Court | Club
     type Query { node(id: ID!): Node, things: [Thing!]!, court: Court }
   `;
-  const ops = [
+  const ops: CapturedOperation[] = [
     { document: `{ node(id: "1") { __typename id } court { name tags } }`, responseValues: { "Query.node": ["value" as const], "Node.id": ["value" as const], "Query.court": ["value" as const], "Court.name": ["null" as const], "Court.tags": ["empty" as const] }, responseTypes: { Node: ["Club", "Ghost"] } },
     { document: `{ court { name } }`, responseValues: { "Query.court": ["value" as const], "Court.name": ["null" as const, "null" as const], "Gone.x": ["value" as const] }, responseTypes: { Unknown: ["X"] } },
     { document: `{ things { __typename } }` },
