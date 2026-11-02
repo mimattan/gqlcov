@@ -108,6 +108,22 @@ gqlcov tests .gqlcov/report.json --test "create match" # everything one test tou
 
 In the HTML report each row shows its covering tests, typing a test name in the filter shows everything that test touches, and a Tests section lists what only each test covers. In the JSON, elements carry `tests` and `report.tests` counts operations per test.
 
+## Subscriptions
+
+Subscriptions are captured once, when the client subscribes (events are not counted, and no response data is read from them).
+
+- **Envelop / Yoga**: `useGqlcovCapture()` captures them with no extra setup.
+- **Apollo Server**: subscriptions run on a separate WebSocket server that Apollo's plugins never see. Call the capture from that server's operation hook:
+
+  ```ts
+  import { gqlcovSubscriptionCapture } from "@gqlcov/capture-apollo";
+  const capture = gqlcovSubscriptionCapture();                 // same options as the plugin
+  useServer({ schema, onOperation: (ctx, message, args) => capture(args) }, wsServer);   // graphql-ws 5
+  ```
+
+  Any WebSocket server works: pass the execution args (`document`, `operationName`, `variableValues`, `contextValue`).
+- **Playwright**: `captureGraphQL` also reads WebSocket frames on sockets whose URL matches `endpoint`, for both `graphql-ws` (`subscribe`) and the older `subscriptions-transport-ws` (`start`). Given a browser context, it watches every page in it. Sockets mocked with `page.routeWebSocket` never reach the network, so Playwright does not report them and they are not captured.
+
 ## Persisted queries
 
 Clients on Apollo persisted query lists, automatic persisted queries, Relay persisted documents or Cosmo persisted operations send an id instead of the document. The server plugins are unaffected; the Playwright capture records the id and resolves it in one of three ways:

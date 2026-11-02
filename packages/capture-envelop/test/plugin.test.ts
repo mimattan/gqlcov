@@ -23,6 +23,38 @@ afterEach(() => {
 });
 const fresh = () => join(mkdtempSync(join(tmpdir(), "gqlcov-envelop-")), "captures");
 
+describe("useGqlcovCapture subscriptions", () => {
+  const subSchema = buildSchema(`type Query { x: Int } type Subscription { tick(n: Int): Int }`);
+  const subRoot = { tick: async function* () { yield { tick: 1 }; yield { tick: 2 }; } };
+  async function subscribeOnce(options: CaptureOptions, query: string, variables?: Record<string, unknown>, context: Record<string, unknown> = {}) {
+    const e = envelop({ plugins: [useEngine({ parse, validate, execute, subscribe, specifiedRules }), useSchema(subSchema), useGqlcovCapture(options)] })(context);
+    const events: unknown[] = [];
+    const stream = await e.subscribe({ schema: e.schema, document: e.parse(query), rootValue: subRoot, variableValues: variables, contextValue: await e.contextFactory() });
+    for await (const v of stream as AsyncIterable<unknown>) events.push(v);
+    return events;
+  }
+
+  it("captures a subscription once, when the client subscribes", async () => {
+    const dir = fresh();
+    const events = await subscribeOnce({ dir, enabled: true, source: (ctx) => ctx.who as string }, `subscription Tick($n: Int) { tick(n: $n) }`, { n: 2 }, { who: "live test" });
+    expect(events).toHaveLength(2);
+    const ops = readCaptures(dir);
+    expect(ops).toHaveLength(1);
+    expect(ops[0]).toMatchObject({ operationName: null, variables: { n: 2 }, source: "live test" });
+    expect(ops[0].document).toContain("subscription Tick");
+    expect(ops[0].responseEnums).toBeUndefined();
+  });
+
+  it("skips subscriptions when disabled and never breaks one it cannot record", async () => {
+    const dir = fresh();
+    await subscribeOnce({ dir, enabled: false }, `subscription { tick }`);
+    expect(readCaptures(dir)).toHaveLength(0);
+    const root = mkdtempSync(join(tmpdir(), "gqlcov-envelop-"));
+    writeFileSync(join(root, "file"), "x");
+    expect(await subscribeOnce({ dir: join(root, "file", "captures"), enabled: true }, `subscription { tick }`)).toHaveLength(2);
+  });
+});
+
 describe("useGqlcovCapture", () => {
   it("captures document, operation, variables, source and response enums", async () => {
     const dir = fresh();

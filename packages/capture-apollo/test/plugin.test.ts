@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { ApolloServer } from "@apollo/server";
 import { buildSchema, parse } from "graphql";
 import { readCaptures } from "@gqlcov/core";
-import { gqlcovCapturePlugin, type CaptureOptions } from "../src/index.js";
+import { gqlcovCapturePlugin, gqlcovSubscriptionCapture, type CaptureOptions } from "../src/index.js";
 
 const typeDefs = `enum Status { OPEN CLOSED } type Court { id: ID!, status: Status! } type Query { court(id: ID!): Court, boom: Int! }`;
 const resolvers = { Query: { court: (_: unknown, { id }: { id: string }) => ({ id, status: "OPEN" }), boom: () => { throw new Error("boom"); } } };
@@ -102,5 +102,45 @@ describe("gqlcovCapturePlugin", () => {
       process.chdir(cwd);
     }
     expect(readCaptures(join(root, ".gqlcov/captures"))).toHaveLength(1);
+  });
+});
+
+describe("gqlcovSubscriptionCapture", () => {
+  const document = parse(`subscription Tick($n: Int) { tick(n: $n) }`);
+
+  it("captures the execution args a WebSocket server hands over, with a source", () => {
+    const dir = fresh();
+    gqlcovSubscriptionCapture({ dir, enabled: true, source: (ctx) => ctx.who as string })({ document, operationName: "Tick", variableValues: { n: 1 }, contextValue: { who: "ws test" } });
+    gqlcovSubscriptionCapture({ dir, enabled: true, source: (ctx) => (Object.keys(ctx).length ? "context" : "no context") })({ document });
+    const ops = readCaptures(dir);
+    expect(ops).toHaveLength(2);
+    expect(ops[0]).toMatchObject({ operationName: "Tick", variables: { n: 1 }, source: "ws test" });
+    expect(ops[0].document).toContain("subscription Tick");
+    expect(ops[1]).toMatchObject({ operationName: null, variables: null, source: "no context" });
+  });
+
+  it("is off when disabled, uses the env folder, and never throws when it cannot write", () => {
+    const root = mkdtempSync(join(tmpdir(), "gqlcov-apollo-"));
+    gqlcovSubscriptionCapture({ dir: join(root, "off"), enabled: false })({ document });
+    expect(readCaptures(join(root, "off"))).toHaveLength(0);
+    process.env.GQLCOV_CAPTURE_DIR = join(root, "env");
+    gqlcovSubscriptionCapture({ enabled: true })({ document });
+    expect(readCaptures(join(root, "env"))).toHaveLength(1);
+    writeFileSync(join(root, "file"), "x");
+    expect(() => gqlcovSubscriptionCapture({ dir: join(root, "file", "c"), enabled: true })({ document })).not.toThrow();
+  });
+
+  it("defaults to .gqlcov/captures and to GQLCOV_CAPTURE", () => {
+    const root = mkdtempSync(join(tmpdir(), "gqlcov-apollo-"));
+    delete process.env.GQLCOV_CAPTURE_DIR;
+    process.env.GQLCOV_CAPTURE = "1";
+    const cwd = process.cwd();
+    process.chdir(root);
+    try {
+      gqlcovSubscriptionCapture()({ document });
+      expect(readCaptures(join(root, ".gqlcov/captures"))).toHaveLength(1);
+    } finally {
+      process.chdir(cwd);
+    }
   });
 });

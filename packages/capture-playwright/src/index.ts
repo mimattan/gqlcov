@@ -1,4 +1,4 @@
-import type { BrowserContext, Page, Request } from "@playwright/test";
+import type { BrowserContext, Page, Request, WebSocket } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { DEFAULT_CAPTURE_DIR, mergePersistedManifests, parsePersistedManifest, writeCapture, type CapturedOperation, type PersistedManifest } from "@gqlcov/core";
 
@@ -27,18 +27,24 @@ export function persistedIdOf(b: Record<string, unknown>): string | undefined {
   return undefined;
 }
 
+/** One GraphQL request payload (`{ query, operationName, variables, extensions }` or a persisted id) as a capture. */
+function operationFromBody(body: unknown, manifest?: PersistedManifest): CapturedOperation | undefined {
+  if (!body || typeof body !== "object") return undefined;
+  const b = body as Record<string, unknown>;
+  const persistedId = persistedIdOf(b);
+  let document = typeof b.query === "string" ? b.query : undefined;
+  if (persistedId && document) learned.set(persistedId, document);
+  if (!document && persistedId) document = manifest?.get(persistedId) ?? learned.get(persistedId);
+  if (!document && !persistedId) return undefined;
+  return { document, persistedId, operationName: (b.operationName as string | null) ?? null, variables: (b.variables as Record<string, unknown> | null) ?? null };
+}
+
 /** Parse one HTTP request body into zero or more operations (handles batched arrays, GET queries and persisted ids). */
 export function operationsFromRequest(request: Request, manifest?: PersistedManifest): CapturedOperation[] {
   const out: CapturedOperation[] = [];
   const push = (body: unknown) => {
-    if (!body || typeof body !== "object") return;
-    const b = body as Record<string, unknown>;
-    const persistedId = persistedIdOf(b);
-    let document = typeof b.query === "string" ? b.query : undefined;
-    if (persistedId && document) learned.set(persistedId, document);
-    if (!document && persistedId) document = manifest?.get(persistedId) ?? learned.get(persistedId);
-    if (!document && !persistedId) return;
-    out.push({ document, persistedId, operationName: (b.operationName as string | null) ?? null, variables: (b.variables as Record<string, unknown> | null) ?? null });
+    const op = operationFromBody(body, manifest);
+    if (op) out.push(op);
   };
   if (request.method() === "GET") {
     const url = new URL(request.url());
@@ -63,7 +69,23 @@ export function operationsFromRequest(request: Request, manifest?: PersistedMani
 }
 
 /**
- * Record every GraphQL request the page (or context) sends. Call once per test, typically in a fixture:
+ * The operation a client starts in one WebSocket frame, or undefined for any other frame. Understands
+ * graphql-ws (`{ type: "subscribe", payload }`) and the older subscriptions-transport-ws (`{ type: "start", payload }`).
+ */
+export function operationFromFrame(frame: string | Buffer, manifest?: PersistedManifest): CapturedOperation | undefined {
+  let message: unknown;
+  try {
+    message = JSON.parse(typeof frame === "string" ? frame : frame.toString("utf8"));
+  } catch {
+    return undefined;
+  }
+  const m = message as { type?: unknown; payload?: unknown } | null;
+  if (!m || (m.type !== "subscribe" && m.type !== "start")) return undefined;
+  return operationFromBody(m.payload, manifest);
+}
+
+/**
+ * Record every GraphQL request the page (or context) sends, over HTTP and over WebSocket (subscriptions). Call once per test, typically in a fixture:
  *
  *   test.beforeEach(async ({ page }, testInfo) => { await captureGraphQL(page, { source: testInfo.title }); });
  */
@@ -73,14 +95,30 @@ export async function captureGraphQL(target: Page | BrowserContext, options: Pla
   const matches = (url: string) => (typeof endpoint === "string" ? url.includes(endpoint) : endpoint.test(url));
   const manifestFiles = options.manifest === undefined ? [] : Array.isArray(options.manifest) ? options.manifest : [options.manifest];
   const manifest = manifestFiles.length ? mergePersistedManifests(manifestFiles.map((f) => parsePersistedManifest(readFileSync(f, "utf8")))) : undefined;
+  const save = (op: CapturedOperation) => {
+    try {
+      writeCapture(dir, { ...op, source: options.source });
+    } catch {
+      // ignore
+    }
+  };
   target.on("request", (request) => {
     if (!matches(request.url())) return;
-    for (const op of operationsFromRequest(request, manifest)) {
-      try {
-        writeCapture(dir, { ...op, source: options.source });
-      } catch {
-        // ignore
-      }
-    }
+    for (const op of operationsFromRequest(request, manifest)) save(op);
   });
+  const watchSockets = (page: Page) =>
+    page.on("websocket", (ws: WebSocket) => {
+      if (!matches(ws.url())) return;
+      ws.on("framesent", ({ payload }) => {
+        const op = operationFromFrame(payload, manifest);
+        if (op) save(op);
+      });
+    });
+  // A page reports its own sockets; a browser context only reports pages, so watch each of them.
+  if ("pages" in target) {
+    target.pages().forEach(watchSockets);
+    target.on("page", watchSockets);
+  } else {
+    watchSockets(target);
+  }
 }

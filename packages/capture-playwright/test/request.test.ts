@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Page, Request } from "@playwright/test";
 import { readCaptures } from "@gqlcov/core";
-import { captureGraphQL, operationsFromRequest, persistedIdOf } from "../src/index.js";
+import { captureGraphQL, operationFromFrame, operationsFromRequest, persistedIdOf } from "../src/index.js";
 
 const post = (body: unknown): Request => ({ method: () => "POST", url: () => "http://x/graphql", postData: () => JSON.stringify(body) }) as unknown as Request;
 const get = (params: Record<string, string>): Request => ({ method: () => "GET", url: () => `http://x/graphql?${new URLSearchParams(params)}`, postData: () => null }) as unknown as Request;
@@ -107,5 +107,61 @@ describe("captureGraphQL", () => {
     expect(operationsFromRequest(raw("--multipart--"))).toEqual([]);
     expect(operationsFromRequest(post([null, 3, { query: "{ a }" }]))).toHaveLength(1);
     expect(operationsFromRequest(get({ query: "{ a }", variables: "{not json" }))[0].variables).toBeNull();
+  });
+});
+
+describe("operationFromFrame", () => {
+  it("reads graphql-ws subscribe and subscriptions-transport-ws start frames, as text or bytes", () => {
+    const payload = { query: "subscription Tick { tick }", operationName: "Tick", variables: { n: 1 } };
+    expect(operationFromFrame(JSON.stringify({ id: "1", type: "subscribe", payload }))).toEqual({ document: payload.query, persistedId: undefined, operationName: "Tick", variables: { n: 1 } });
+    expect(operationFromFrame(Buffer.from(JSON.stringify({ id: "2", type: "start", payload: { query: "{ a }" } })))).toMatchObject({ document: "{ a }", operationName: null });
+    expect(operationFromFrame(JSON.stringify({ type: "subscribe", payload: { extensions: { persistedQuery: { sha256Hash: "s1" } } } }), new Map([["s1", "subscription { s }"]]))?.document).toBe("subscription { s }");
+  });
+
+  it("ignores protocol messages, other JSON and binary noise", () => {
+    expect(operationFromFrame(JSON.stringify({ type: "connection_init" }))).toBeUndefined();
+    expect(operationFromFrame("null")).toBeUndefined();
+    expect(operationFromFrame(JSON.stringify({ type: "subscribe" }))).toBeUndefined();
+    expect(operationFromFrame(Buffer.from([0xff, 0x00]))).toBeUndefined();
+  });
+});
+
+describe("captureGraphQL over WebSocket", () => {
+  type Handler = (x: never) => void;
+  class Emitter {
+    handlers = new Map<string, Handler[]>();
+    on(event: string, cb: Handler) { this.handlers.set(event, [...(this.handlers.get(event) ?? []), cb]); return this; }
+    emit(event: string, x: unknown) { for (const cb of this.handlers.get(event) ?? []) cb(x as never); }
+  }
+  const socket = (url: string) => Object.assign(new Emitter(), { url: () => url });
+  const subscribe = (query: string) => ({ payload: JSON.stringify({ id: "1", type: "subscribe", payload: { query } }) });
+
+  it("records operations sent over a page's sockets that match the endpoint", async () => {
+    const dir = join(mkdtempSync(join(tmpdir(), "gqlcov-pw-")), "captures");
+    const page = new Emitter();
+    await captureGraphQL(page as unknown as Page, { dir, source: "ws test" });
+    const ws = socket("ws://app/graphql");
+    page.emit("websocket", ws);
+    ws.emit("framesent", { payload: JSON.stringify({ type: "connection_init" }) });
+    ws.emit("framesent", subscribe("subscription { a }"));
+    const other = socket("ws://app/chat");
+    page.emit("websocket", other);
+    other.emit("framesent", subscribe("subscription { ignored }"));
+    expect(readCaptures(dir).map((o) => [o.document, o.source])).toEqual([["subscription { a }", "ws test"]]);
+  });
+
+  it("watches every page of a browser context, open now or later", async () => {
+    const dir = join(mkdtempSync(join(tmpdir(), "gqlcov-pw-")), "captures");
+    const early = new Emitter();
+    const context = Object.assign(new Emitter(), { pages: () => [early] });
+    await captureGraphQL(context as unknown as Page, { dir });
+    const late = new Emitter();
+    context.emit("page", late);
+    for (const [page, q] of [[early, "subscription { early }"], [late, "subscription { late }"]] as const) {
+      const ws = socket("ws://app/graphql");
+      page.emit("websocket", ws);
+      ws.emit("framesent", subscribe(q));
+    }
+    expect(readCaptures(dir).map((o) => o.document).sort()).toEqual(["subscription { early }", "subscription { late }"]);
   });
 });
