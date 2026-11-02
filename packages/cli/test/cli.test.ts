@@ -47,7 +47,7 @@ function startServer(): Promise<void> {
       }
       if (req.url === "/apollo") {
         if (json.query.includes("GqlcovFieldUsage"))
-          return send(200, { data: { graph: { variant: { schemaCoordinateInsightsUsageReport: { records: [{ namedType: "Query", namedAttribute: "clubs", referencingOperationCount: 120000, estimatedExecutionCount: 9, used: true }] } } } } });
+          return send(200, { data: { graph: { variant: { schemaCoordinateInsightsUsageReport: { records: [{ namedType: "Query", namedAttribute: "clubs", coordinateKind: "OBJECT_FIELD", referencingOperationCount: 120000, estimatedExecutionCount: 9, used: true }, { namedType: "CourtFilter", namedAttribute: "indoor", coordinateKind: "INPUT_OBJECT_FIELD", referencingOperationCount: 300, estimatedExecutionCount: 0, used: true }] } } } } });
         return send(200, { data: { graph: { variants: [{ name: "current" }], variant: { latestApprovedLaunch: null, latestPublication: { schema: { document: sdl } } } } } });
       }
       const method = req.url!.split("/").pop();
@@ -80,7 +80,7 @@ beforeAll(async () => {
   writeCapture(caps, { persistedId: "p2" });
   writeFileSync(at("manifest.json"), JSON.stringify({ p1: `query Club { club(id: "1") { name } }` }));
   const many = Object.fromEntries(Array.from({ length: 30 }, (_, i) => [`Gone.f${i}`, i + 1]));
-  writeFileSync(at("usage.json"), JSON.stringify({ source: "hand-made", from: "2026-10-01T00:00:00Z", to: "2026-10-31T00:00:00Z", fields: { ...many, "Court.surface": 2_500_000, "Query.clubs": 3 } }));
+  writeFileSync(at("usage.json"), JSON.stringify({ source: "hand-made", from: "2026-10-01T00:00:00Z", to: "2026-10-31T00:00:00Z", fields: { ...many, "Court.surface": 2_500_000, "Query.clubs": 3, "CourtFilter.indoor": 50, "Surface.HARD": 9, "CourtFilter.surface": 3 } }));
   writeFileSync(at("usage-many.json"), JSON.stringify(Object.fromEntries(["Query.club", "Mutation.renameClub", "Court.surface", "Court.status", "Club.name", "Club.id", "Club.courts", "Court.id", "Query.clubs"].flatMap((f, i) => Array.from({ length: 4 }, (_, j) => [`${f}${j ? `x${j}` : ""}`, i + j + 1])))));
   await startServer();
 });
@@ -121,7 +121,13 @@ describe("gqlcov report", () => {
     expect(r.out).toContain("gqlcov: 4 operations (3 queries, 1 mutations, 0 subscriptions, 1 invalid, 1 unresolved persisted ids)");
     expect(r.out).toMatch(/clubs\s+\d+(\.\d+)?% \(\d+\/\d+\)/);
     expect(r.out).toContain("production usage (hand-made, 2026-10-01 to 2026-10-31)");
-    expect(r.out).toMatch(/Court\.surface\s+2\.5M requests/);
+    expect(r.out).toMatch(/Court\.surface\s+2\.5M requests\n/);
+    expect(r.out).toMatch(/CourtFilter\.indoor\s+50 requests  \(input field\)/);
+    expect(r.out).toMatch(/Surface\.HARD\s+9 requests  \(enum value\)/);
+    expect(r.out).toMatch(/Production inputs sent by a test\s+33\.33%  \(1\/3\)/);
+    expect(r.out).toContain("3 input fields and enum values with traffic, 1 sent by a test");
+    const inputsGate = await cli("gate", at("full", "report.json"), "--min-used-inputs", "75");
+    expect(inputsGate.err).toContain("33.33% of input fields and enum values with production traffic are sent by a test, below the minimum 75% (2 untested: CourtFilter.indoor, Surface.HARD)");
     expect(r.out).toMatch(/in usage but not in the schema \(30\): .*, \.\.\./);
     expect(r.out).toContain("1 captures carried only a persisted id");
     expect(r.out).toMatch(/\n  fields \(\d+\):\n    /);
@@ -196,8 +202,8 @@ describe("gqlcov usage", () => {
   it("writes GraphOS and Cosmo usage files", async () => {
     Object.assign(process.env, { APOLLO_KEY: "k", APOLLO_REGISTRY_URL: `${base}/apollo`, COSMO_API_KEY: "k", COSMO_API_URL: `${base}/cosmo` });
     const a = await cli("usage", "apollo", "club@current", "-o", at("u", "apollo.json"), "--metric", "executions", "--limit", "10", "--since", "2026-10-01T00:00:00Z");
-    expect(a.out).toMatch(/^gqlcov: 1 fields from apollo club@current \(estimated executions\), 2026-10-01 to \d{4}-\d\d-\d\d: /);
-    expect(JSON.parse(readFileSync(at("u", "apollo.json"), "utf8")).fields).toEqual({ "Query.clubs": 9 });
+    expect(a.out).toMatch(/^gqlcov: 2 fields from apollo club@current \(estimated executions\), 2026-10-01 to \d{4}-\d\d-\d\d: /);
+    expect(JSON.parse(readFileSync(at("u", "apollo.json"), "utf8")).fields).toEqual({ "Query.clubs": 9, "CourtFilter.indoor": 300 });
     const c = await cli("usage", "cosmo", "club", "-o", at("u", "cosmo.json"), "--range", "48");
     expect(c.out).toContain("gqlcov: 1 fields from cosmo default/club (requests), 2026-10-01 to 2026-10-31");
     await cli("usage", "cosmo", "club", "-o", at("u", "cosmo2.json"), "--from", "2026-10-01T00:00:00Z", "--to", "2026-10-31T00:00:00Z");

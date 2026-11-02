@@ -18,6 +18,9 @@ interface Row { name: string; covered: number; total: number; body: string; kind
 const gAttr = (graphs?: string[]) => (graphs ? ` data-g="${esc(graphs.join(" "))}"` : "");
 /** Test names on a list item: searchable through data-t, readable in a short label with the full list on hover. */
 const tAttr = (tests?: string[]) => (tests ? ` data-t="${esc(tests.join("\n").toLowerCase())}"` : "");
+/** Production traffic badge: red when the element has traffic but no test. */
+const prodBadge = (requests: number | undefined, tested: boolean) =>
+  requests === undefined ? "" : `<span class="prod${requests > 0 && !tested ? " risk" : ""}" title="production requests in the usage window">${requests > 0 ? `${fmtRequests(requests)} in prod` : "no prod traffic"}</span>`;
 const byTests = (tests?: string[]) => (tests ? `<span class="by" title="Covered by: ${esc(tests.join(", "))}">${esc(tests[0])}${tests.length > 1 ? ` +${tests.length - 1}` : ""}</span>` : "");
 
 /** A row for an object or interface type; callers only pass types the report has. */
@@ -29,7 +32,7 @@ function typeRow(report: CoverageReport, tn: string, label?: string): Row {
     .map(([fn, f]) => {
       const args = Object.entries(f.args);
       const argText = args.length ? `<span class="args">(${args.map(([an, a]) => `<span class="${a.hits > 0 ? "on" : "off"}" title="${a.hits} hits${a.tests ? `: ${esc(a.tests.join(", "))}` : ""}">${esc(an)}</span>`).join(", ")})</span>` : "";
-      const prod = f.requests !== undefined ? `<span class="prod${f.requests > 0 && f.hits === 0 ? " risk" : ""}" title="production requests in the usage window">${f.requests > 0 ? `${fmtRequests(f.requests)} in prod` : "no prod traffic"}</span>` : "";
+      const prod = prodBadge(f.requests, f.hits > 0);
       return `<li class="${f.hits > 0 ? "on" : "off"}" data-n="${esc(fn.toLowerCase())}"${gAttr(f.graphs)}${tAttr(f.tests)}><span class="fname">${esc(fn)}${argText}</span><span class="hits">${byTests(f.tests)}${prod}${f.hits > 0 ? `${f.hits}×` : "never"}</span></li>`;
     })
     .join("");
@@ -44,7 +47,7 @@ function inputRow(report: CoverageReport, tn: string): Row {
     .map(([fn, f]) => {
       const state = f.sent === 0 ? "off" : !f.required && f.omitted === 0 ? "half" : "on";
       const detail = f.sent === 0 ? "never sent" : `sent ${f.sent}${f.required ? "" : `, omitted ${f.omitted}`}${f.values.null ? `, null ${f.values.null}` : ""}`;
-      return `<li class="${state}" data-n="${esc(fn.toLowerCase())}"${gAttr(f.graphs)}${tAttr(f.tests)}><span class="fname">${esc(fn)}${f.required ? "<span class='req'>!</span>" : ""}</span><span class="hits">${byTests(f.tests)}${detail}</span></li>`;
+      return `<li class="${state}" data-n="${esc(fn.toLowerCase())}"${gAttr(f.graphs)}${tAttr(f.tests)}><span class="fname">${esc(fn)}${f.required ? "<span class='req'>!</span>" : ""}</span><span class="hits">${byTests(f.tests)}${prodBadge(f.requests, f.sent > 0)}${detail}</span></li>`;
     })
     .join("");
   return { name: tn, covered, total: fields.length, body: `<ul class="fields">${lines}</ul>`, kind: "input", uncovered: covered < fields.length, graphs: t.graphs };
@@ -61,7 +64,7 @@ function enumRow(report: CoverageReport, en: string): Row {
     const parts = [input ? (v.hits > 0 ? `sent ${v.hits}` : "never sent") : "", e.output ? (v.observed ? `in ${v.observed} responses` : "not seen in responses") : ""];
     return parts.filter(Boolean).join(", ");
   };
-  const lines = values.map(([vn, v]) => `<li class="${isOn(v) ? "on" : "off"}" data-n="${esc(vn.toLowerCase())}"${gAttr(v.graphs)}${tAttr(v.tests)}><span class="fname">${esc(vn)}</span><span class="hits">${byTests(v.tests)}${detail(v)}</span></li>`).join("");
+  const lines = values.map(([vn, v]) => `<li class="${isOn(v) ? "on" : "off"}" data-n="${esc(vn.toLowerCase())}"${gAttr(v.graphs)}${tAttr(v.tests)}><span class="fname">${esc(vn)}</span><span class="hits">${byTests(v.tests)}${input ? prodBadge(v.requests, v.hits > 0) : ""}${detail(v)}</span></li>`).join("");
   return { name: en, covered, total: values.length, body: `<ul class="fields">${lines}</ul>`, kind: input ? "enum" : "out enum", uncovered: covered < values.length, graphs: e.graphs };
 }
 
@@ -118,10 +121,10 @@ function usageSection(report: CoverageReport): string {
   if (!u) return "";
   const where = [u.source, u.from && u.to ? `${u.from.slice(0, 10)} to ${u.to.slice(0, 10)}` : undefined].filter((x): x is string => !!x).map(esc).join(", ");
   const risk = u.untestedUsed.length
-    ? `<ul class="fields">${u.untestedUsed.map((x) => `<li class="off"><span class="fname">${esc(x.path)}</span><span class="hits"><span class="prod risk">${fmtRequests(x.requests)} requests</span>never tested</span></li>`).join("")}</ul>`
+    ? `<ul class="fields">${u.untestedUsed.map((x) => `<li class="off"><span class="fname">${esc(x.path)}${x.kind === "field" ? "" : ` <span class="kind">${x.kind === "inputField" ? "input" : "enum value"}</span>`}</span><span class="hits"><span class="prod risk">${fmtRequests(x.requests)} requests</span>never tested</span></li>`).join("")}</ul>`
     : `<p class="empty">Every field with production traffic was requested by a test.</p>`;
   const list = (title: string, items: string[]) => items.length ? `<details class="row aux"><summary><div class="sum"><span class="rname">${title}</span><span class="mini-num">${items.length}</span></div></summary><ul class="fields">${items.map((p) => `<li class="off"><span class="fname">${esc(p)}</span></li>`).join("")}</ul></details>` : "";
-  return `<section class="usage"><h2>Production usage <span class="h2-note">${where}</span></h2><p class="hint">${u.usedFields.total} fields had production traffic; ${u.usedFields.covered} of them were requested by a test.</p><div class="row risk-box"><div class="risk-head">Used in production, never tested <span class="h2-note">${u.untestedUsed.length}</span></div>${risk}</div>${list("Tested, no production traffic", u.testedUnused)}${list("No traffic and no test: deprecation candidates", u.unusedUntested)}${list("In usage data but not in the schema", u.unknown)}</section>`;
+  return `<section class="usage"><h2>Production usage <span class="h2-note">${where}</span></h2><p class="hint">${u.usedFields.total} fields had production traffic; ${u.usedFields.covered} of them were requested by a test.${u.usedInputs ? ` ${u.usedInputs.total} input fields and enum values had traffic; a test sent ${u.usedInputs.covered} of them.` : ""}</p><div class="row risk-box"><div class="risk-head">Used in production, never tested <span class="h2-note">${u.untestedUsed.length}</span></div>${risk}</div>${list("Tested, no production traffic", u.testedUnused)}${list("No traffic and no test: deprecation candidates", u.unusedUntested)}${list("In usage data but not in the schema", u.unknown)}</section>`;
 }
 
 function testsSection(report: CoverageReport): string {
@@ -226,6 +229,7 @@ ${ledger("Enum values", s.enumValues, "sent as input at least once; enums a clie
 ${s.enumValuesObserved ? ledger("Enum values in responses", s.enumValuesObserved, "returned at least once; informational, never gated") : ""}
 ${ledger("Types", s.types, "touched by any operation")}
 ${report.usage ? ledger("Production fields tested", report.usage.usedFields, "fields with production traffic that a test requested") : ""}
+${report.usage?.usedInputs ? ledger("Production inputs sent by a test", report.usage.usedInputs, "input fields and enum values with production traffic that a test sent") : ""}
 </div>
 ${usageSection(report)}
 

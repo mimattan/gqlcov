@@ -122,23 +122,23 @@ gqlcov report -s cosmo:default/my-graph
 
 ## Production usage: test what is actually called
 
-Both registries know which fields production traffic uses. Join that with coverage and the question "what should we test next" has a ranked answer:
+Both registries know which fields production traffic uses, and GraphOS also knows which input fields and enum values clients send. Join that with coverage and the question "what should we test next" has a ranked answer:
 
 ```sh
 gqlcov usage apollo my-graph@current --since -2592000 -o .gqlcov/usage.json    # GraphOS Insights, last 30 days
 gqlcov usage cosmo default/my-graph --range 720 -o .gqlcov/usage.json           # Cosmo analytics, last 30 days
 gqlcov report -s apollo:my-graph@current --usage .gqlcov/usage.json --html .gqlcov/report.html
-gqlcov gate .gqlcov/report.json --min-used-fields 95
+gqlcov gate .gqlcov/report.json --min-used-fields 95 --min-used-inputs 80
 ```
 
 The report then lists, with request counts:
 
-- **Used in production, never tested**: the risk list, most requested first. `--min-used-fields` gates on the share of fields with traffic that a test requested.
+- **Used in production, never tested**: the risk list, most requested first: output fields no test requested, and input fields and enum values no test sent. `--min-used-fields` gates on the share of output fields with traffic that a test requested, `--min-used-inputs` on the share of input fields and enum values with traffic that a test sent.
 - **Tested, no production traffic**: tests that protect nothing yet, or traffic that moved.
 - **No traffic and no test**: deprecation candidates.
 - **In usage data but not in the schema**: removed fields still being called.
 
-The usage file is plain JSON, `{ "fields": { "Type.field": requests } }`, so any other analytics source can produce it. Apollo's `--metric executions` uses estimated resolver executions instead of referencing operations.
+The usage file is plain JSON keyed by schema coordinate, `{ "fields": { "Type.field": n, "Input.field": n, "Enum.VALUE": n } }`, so any other analytics source can produce it. Inputs are joined only when the file mentions at least one; Cosmo's bulk field usage covers output fields only. Values of output-only enums are not joined, since no test can send them. Apollo's `--metric executions` uses estimated resolver executions for output fields instead of referencing operations.
 
 ## Federation: coverage per subgraph
 
@@ -201,7 +201,7 @@ gqlcov markdown <report> [--base report.json] [-o summary.md]
 gqlcov comment <summary.md> [--id name] [--token t] [--repo owner/name] [--pr n]
 gqlcov merge   <report>... -o merged.json          # parallel shards
 gqlcov diff    <base> <head> [--json]
-gqlcov gate    <report> [--min-fields n] [--min-input-fields n] [--min-enum-values n] [--base report.json] [--tolerance points] [--subgraph name...|'*'] [--min-used-fields n]       # a missing --base file skips the no-decrease check
+gqlcov gate    <report> [--min-fields n] [--min-input-fields n] [--min-enum-values n] [--base report.json] [--tolerance points] [--subgraph name...|'*'] [--min-used-fields n] [--min-used-inputs n]       # a missing --base file skips the no-decrease check
 ```
 
 Exclude patterns match `Type`, `Type.field`, `Type.field(arg)`, `Input.field` or `Enum.VALUE`, with `*` as a wildcard inside one segment: `--exclude "Query.__*" "Mutation.internal*" "LegacyInput.*"`. Deprecated elements and introspection types are excluded by default.

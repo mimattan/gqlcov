@@ -27,6 +27,7 @@ function printSummary(r: CoverageReport): void {
   // Older reports have no observed number.
   if (s.enumValuesObserved) console.log(line("Enum values in responses (not gated)", s.enumValuesObserved));
   if (r.usage) console.log(line("Production fields tested", r.usage.usedFields));
+  if (r.usage?.usedInputs) console.log(line("Production inputs sent by a test", r.usage.usedInputs));
   printSubgraphs(r);
 }
 
@@ -35,10 +36,11 @@ function printUsage(r: CoverageReport): void {
   const u = r.usage;
   if (!u) return;
   const where = [u.source, u.from && u.to ? `${u.from.slice(0, 10)} to ${u.to.slice(0, 10)}` : undefined].filter(Boolean).join(", ");
-  console.log(`\n  production usage${where ? ` (${where})` : ""}: ${u.usedFields.total} fields with traffic, ${u.usedFields.covered} tested, ${u.testedUnused.length} tested without traffic, ${u.unusedUntested.length} neither`);
+  const inputs = u.usedInputs ? `, ${u.usedInputs.total} input fields and enum values with traffic, ${u.usedInputs.covered} sent by a test` : "";
+  console.log(`\n  production usage${where ? ` (${where})` : ""}: ${u.usedFields.total} fields with traffic, ${u.usedFields.covered} tested${inputs}, ${u.testedUnused.length} tested without traffic, ${u.unusedUntested.length} neither`);
   if (u.untestedUsed.length) {
     console.log(`  used in production, never tested (${u.untestedUsed.length}):`);
-    for (const x of u.untestedUsed.slice(0, 25)) console.log(`    ${x.path.padEnd(44)} ${fmtRequests(x.requests).padStart(8)} requests`);
+    for (const x of u.untestedUsed.slice(0, 25)) console.log(`    ${x.path.padEnd(44)} ${fmtRequests(x.requests).padStart(8)} requests${x.kind === "field" ? "" : x.kind === "inputField" ? "  (input field)" : "  (enum value)"}`);
     if (u.untestedUsed.length > 25) console.log(`    ... and ${u.untestedUsed.length - 25} more`);
   }
   if (u.unknown.length) console.log(`  in usage but not in the schema (${u.unknown.length}): ${u.unknown.slice(0, 10).join(", ")}${u.unknown.length > 10 ? ", ..." : ""}`);
@@ -257,6 +259,7 @@ export function buildCli(): Command {
     .option("--tolerance <points>", "allowed decrease in percentage points", parseFloat, 0)
     .option("--subgraph <name...>", "apply the thresholds to these subgraphs instead of the whole schema; * for every subgraph")
     .option("--min-used-fields <pct>", "minimum share of fields with production traffic that are tested (report needs --usage)", parseFloat)
+    .option("--min-used-inputs <pct>", "minimum share of input fields and enum values with production traffic that a test sent (usage must cover inputs)", parseFloat)
     .action((reportPath: string, o) => {
       const report = readReport(reportPath);
       const baseMissing = o.base !== undefined && !existsSync(o.base);
@@ -269,6 +272,7 @@ export function buildCli(): Command {
         tolerance: o.tolerance,
         subgraphs: o.subgraph,
         minUsedFields: o.minUsedFields,
+        minUsedInputs: o.minUsedInputs,
       });
       printSummary(report);
       if (result.passed) return console.log("  gate: passed");

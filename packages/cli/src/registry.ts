@@ -105,9 +105,9 @@ const USAGE_QUERY = `query GqlcovFieldUsage($graph_id: ID!, $variant: String!, $
     variant(name: $variant) {
       schemaCoordinateInsightsUsageReport(
         since: $since, limit: $limit, groupByClient: false,
-        filters: { coordinateKinds: [OBJECT_FIELD] },
+        filters: { coordinateKinds: [OBJECT_FIELD, INPUT_OBJECT_FIELD, ENUM_VALUE] },
         orderBy: { column: REFERENCING_OPERATION_COUNT, direction: DESCENDING }
-      ) { records { namedType namedAttribute referencingOperationCount estimatedExecutionCount used } }
+      ) { records { namedType namedAttribute coordinateKind referencingOperationCount estimatedExecutionCount used } }
     }
   }
 }`;
@@ -115,23 +115,26 @@ const USAGE_QUERY = `query GqlcovFieldUsage($graph_id: ID!, $variant: String!, $
 export interface ApolloUsageOptions extends ApolloOptions {
   /** Platform API Timestamp: ISO 8601, or seconds relative to now as a string ("-2592000"). Default 30 days ago. */
   since?: string;
-  /** "requests" (operations that referenced the field, the Insights "Requests" column) or "executions" (estimated resolver executions). Default requests. */
+  /**
+   * "requests" (operations that referenced the field, the Insights "Requests" column) or "executions" (estimated
+   * resolver executions). Default requests. Input fields and enum values have no executions and always use requests.
+   */
   metric?: "requests" | "executions";
   /** Maximum rows. Default 20000. */
   limit?: number;
 }
 
-/** Production usage per output field of a variant, from GraphOS Insights. */
+/** Production usage per output field, input field and enum value of a variant, from GraphOS Insights. */
 export async function fetchApolloUsage(ref: string, o: ApolloUsageOptions = {}): Promise<UsageData> {
   const { graph, variant } = parseGraphRef(ref);
   const since = o.since ?? "-2592000";
   const data = (await apolloQuery(o, USAGE_QUERY, { graph_id: graph, variant, since, limit: o.limit ?? 20000 })) as {
-    graph: null | { variant: null | { schemaCoordinateInsightsUsageReport: { records: { namedType: string; namedAttribute: string; referencingOperationCount: number | string; estimatedExecutionCount: number | string; used: boolean }[] } } };
+    graph: null | { variant: null | { schemaCoordinateInsightsUsageReport: { records: { namedType: string; namedAttribute: string; coordinateKind: string; referencingOperationCount: number | string; estimatedExecutionCount: number | string; used: boolean }[] } } };
   };
   const records = data.graph?.variant?.schemaCoordinateInsightsUsageReport.records;
   if (!records) throw new Error(`GraphOS: no usage report for ${graph}@${variant} (does the key see this graph?)`);
   const fields: Record<string, number> = {};
-  for (const r of records) fields[`${r.namedType}.${r.namedAttribute}`] = Number(o.metric === "executions" ? r.estimatedExecutionCount : r.referencingOperationCount);
+  for (const r of records) fields[`${r.namedType}.${r.namedAttribute}`] = Number(o.metric === "executions" && r.coordinateKind === "OBJECT_FIELD" ? r.estimatedExecutionCount : r.referencingOperationCount);
   const now = new Date();
   const from = /^-?\d+$/.test(since) ? new Date(now.getTime() + Number(since) * 1000).toISOString() : since;
   return { source: `apollo ${graph}@${variant} (${o.metric === "executions" ? "estimated executions" : "requests"})`, from, to: now.toISOString(), fields };

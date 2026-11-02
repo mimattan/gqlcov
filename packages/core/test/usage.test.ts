@@ -18,7 +18,8 @@ describe("production usage join", () => {
     expect(r.types.Query.fields.player.requests).toBe(100);
     expect(r.types.Query.fields.legacy.requests).toBe(0);
     expect(r.usage).toMatchObject({ source: "apollo g@current", from: "2026-10-01T00:00:00Z", usedFields: { covered: 2, total: 4, percent: 50 } });
-    expect(r.usage!.untestedUsed).toEqual([{ path: "Query.player", requests: 100 }, { path: "Player.rating", requests: 40 }]);
+    expect(r.usage!.untestedUsed).toEqual([{ path: "Query.player", requests: 100, kind: "field" }, { path: "Player.rating", requests: 40, kind: "field" }]);
+    expect(r.usage!.usedInputs).toBeUndefined(); // no input paths in the usage data
     expect(r.usage!.testedUnused).toEqual(["Player.name"]);
     expect(r.usage!.unusedUntested).toEqual(["Query.legacy"]);
     expect(r.usage!.unknown).toEqual(["Query.removed"]);
@@ -49,4 +50,46 @@ describe("production usage join", () => {
     const tie = computeCoverage(sdl, ops, { usage: { fields: { "Query.player": 5, "Player.rating": 5 } } });
     expect(tie.usage!.untestedUsed.map((x) => x.path)).toEqual(["Player.rating", "Query.player"]);
   });
+
+  describe("input fields and enum values", () => {
+    const isdl = /* GraphQL */ `
+      enum Surface { CLAY HARD GRASS }
+      enum Status { OPEN CLOSED }
+      input Filter { surface: Surface, name: String, legacy: String }
+      type Court { id: ID!, status: Status }
+      type Query { courts(filter: Filter): [Court!]! }
+    `;
+    const tested = [{ document: `{ courts(filter: { surface: CLAY }) { id } }` }];
+    const usage = { fields: { "Query.courts": 50, "Filter.surface": 40, "Filter.name": 30, "Filter.legacy": 0, "Surface.CLAY": 20, "Surface.HARD": 10, "Status.OPEN": 7, "Gone.x": 1 } };
+
+    it("joins inputs with what tests sent, apart from the output fields", () => {
+      const r = computeCoverage(isdl, tested, { usage });
+      expect(r.inputTypes.Filter.fields.name.requests).toBe(30);
+      expect(r.enums.Surface.values.HARD.requests).toBe(10);
+      expect(r.usage!.usedFields).toMatchObject({ covered: 1, total: 1 });
+      expect(r.usage!.usedInputs).toMatchObject({ covered: 2, total: 4 }); // Filter.surface, Surface.CLAY of 4 with traffic
+      expect(r.usage!.untestedUsed).toEqual([{ path: "Filter.name", requests: 30, kind: "inputField" }, { path: "Surface.HARD", requests: 10, kind: "enumValue" }]);
+      expect(r.usage!.unusedUntested).toEqual(["Court.status", "Filter.legacy", "Surface.GRASS"]);
+      expect(r.usage!.testedUnused).toEqual(["Court.id"]);
+      expect(r.usage!.unknown).toEqual(["Gone.x"]); // Status.OPEN is an output-only enum value: in the schema, not joined
+      expect(r.enums.Status.values.OPEN.requests).toBeUndefined();
+    });
+
+    it("gates on inputs, and explains when the usage data has none", () => {
+      const r = computeCoverage(isdl, tested, { usage });
+      expect(gate(r, { minUsedInputs: 50 }).passed).toBe(true);
+      expect(gate(r, { minUsedInputs: 60 }).failures).toEqual(["50% of input fields and enum values with production traffic are sent by a test, below the minimum 60% (2 untested: Filter.name, Surface.HARD)"]);
+      expect(gate(r, { minUsedFields: 100 }).passed).toBe(true); // input gaps do not count against output fields
+      const outputsOnly = computeCoverage(isdl, tested, { usage: { fields: { "Query.courts": 1 } } });
+      expect(gate(outputsOnly, { minUsedInputs: 1 }).failures[0]).toMatch(/needs production usage of input fields and enum values/);
+      expect(gate(computeCoverage(isdl, []), { minUsedInputs: 1 }).failures[0]).toMatch(/needs production usage/);
+    });
+
+    it("keeps the inputs join through a merge", () => {
+      const r = computeCoverage(isdl, tested, { usage });
+      const m = mergeReports([r, computeCoverage(isdl, [{ document: `{ courts(filter: { name: "x", surface: HARD }) { id } }` }])]);
+      expect(m.usage!.usedInputs).toMatchObject({ covered: 4, total: 4 });
+    });
+  });
 });
+

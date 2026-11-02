@@ -40,14 +40,17 @@ export function toMarkdown(head: CoverageReport, base?: CoverageReport): string 
 
   const rows = ROWS.filter(([k]) => head.summary[k]);
   const usage = head.usage?.usedFields;
+  const inputs = head.usage?.usedInputs;
   if (base) {
     out.push("| Metric | Base | This change | Change |", "| --- | ---: | ---: | ---: |");
     for (const [k, label] of rows) out.push(`| ${label} | ${base.summary[k] ? pct(base.summary[k]) : "–"} | ${pct(head.summary[k])} | ${change(head.summary[k], base.summary[k])} |`);
     if (usage) out.push(`| Production fields tested | ${base.usage ? pct(base.usage.usedFields) : "–"} | ${pct(usage)} | ${change(usage, base.usage?.usedFields)} |`);
+    if (inputs) out.push(`| Production inputs sent by a test | ${base.usage?.usedInputs ? pct(base.usage.usedInputs) : "–"} | ${pct(inputs)} | ${change(inputs, base.usage?.usedInputs)} |`);
   } else {
     out.push("| Metric | Coverage | Covered |", "| --- | ---: | ---: |");
     for (const [k, label] of rows) out.push(`| ${label} | ${pct(head.summary[k])} | ${head.summary[k].covered} of ${head.summary[k].total} |`);
     if (usage) out.push(`| Production fields tested | ${pct(usage)} | ${usage.covered} of ${usage.total} |`);
+    if (inputs) out.push(`| Production inputs sent by a test | ${pct(inputs)} | ${inputs.covered} of ${inputs.total} |`);
   }
   out.push("");
 

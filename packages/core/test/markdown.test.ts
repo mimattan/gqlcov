@@ -66,6 +66,17 @@ describe("toMarkdown", () => {
   });
 });
 
+describe("toMarkdown with production usage of inputs", () => {
+  const isdl = `enum Surface { CLAY HARD } input Filter { surface: Surface } type Query { courts(filter: Filter): [Int] }`;
+  const usage = { fields: { "Query.courts": 5, "Filter.surface": 4, "Surface.HARD": 2 } };
+  it("adds the inputs row, with a change when the base has it too", () => {
+    const head = computeCoverage(isdl, [{ document: `{ courts(filter: { surface: CLAY }) }` }], { usage });
+    expect(toMarkdown(head)).toContain("| Production inputs sent by a test | 50% | 1 of 2 |");
+    expect(toMarkdown(head, computeCoverage(isdl, [], { usage }))).toContain("| Production inputs sent by a test | 0% | 50% | ▲ +50 |");
+    expect(toMarkdown(head, computeCoverage(isdl, [], { usage: { fields: { "Query.courts": 1 } } }))).toContain("| Production inputs sent by a test | – | 50% | new |");
+  });
+});
+
 describe("fmtRequests", () => {
   it("formats plain numbers, thousands and millions", () => {
     expect([fmtRequests(950), fmtRequests(9999), fmtRequests(15_400), fmtRequests(2_460_000)]).toEqual(["950", "9999", "15k", "2.5M"]);

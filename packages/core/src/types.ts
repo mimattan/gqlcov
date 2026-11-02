@@ -85,6 +85,8 @@ export interface InputFieldCoverage {
   graphs?: string[];
   /** Tests that sent this field, sorted. */
   tests?: string[];
+  /** Production operations that sent this field in the usage window; set by `applyUsage`. */
+  requests?: number;
 }
 
 export interface InputTypeCoverage {
@@ -103,6 +105,8 @@ export interface EnumValueCoverage {
   graphs?: string[];
   /** Tests that sent this value, sorted. */
   tests?: string[];
+  /** Production operations that sent this value in the usage window; set by `applyUsage`. */
+  requests?: number;
 }
 
 export interface EnumCoverage {
@@ -183,7 +187,10 @@ export interface TestCoverage {
   unique: string[];
 }
 
-/** Production field usage, as `gqlcov usage apollo|cosmo` write it or hand-made: requests per "Type.field". */
+/**
+ * Production usage, as `gqlcov usage apollo|cosmo` write it or hand-made: requests per schema coordinate,
+ * "Type.field" for output fields, "Input.field" for input fields and "Enum.VALUE" for enum values.
+ */
 export interface UsageData {
   /** Where the numbers came from, e.g. "apollo my-graph@current". */
   source?: string;
@@ -193,17 +200,25 @@ export interface UsageData {
   fields: Record<string, number>;
 }
 
+/** What a usage path names: an output field, an input field, or a value of an enum a client can send. */
+export type UsageKind = "field" | "inputField" | "enumValue";
+
 export interface UsageJoin {
   source?: string;
   from?: string;
   to?: string;
   /** Output fields with production traffic: how many of them a test requested. */
   usedFields: Ratio;
+  /**
+   * Input fields and values of input enums with production traffic: how many of them a test sent. Present only
+   * when the usage data covers inputs (GraphOS does; Cosmo's bulk usage is output fields only).
+   */
+  usedInputs?: Ratio;
   /** Used in production, never tested: the risk list, most requested first. */
-  untestedUsed: { path: string; requests: number }[];
-  /** Tested but no production traffic in the window. */
+  untestedUsed: { path: string; requests: number; kind: UsageKind }[];
+  /** Tested but no production traffic in the window. Inputs are listed only when the usage data covers them. */
   testedUnused: string[];
-  /** Neither: deprecation candidates. */
+  /** Neither: deprecation candidates. Inputs are listed only when the usage data covers them. */
   unusedUntested: string[];
   /** Usage paths that are not in the (included) schema: removed fields still being called, or excluded ones. */
   unknown: string[];
@@ -235,6 +250,8 @@ export interface GateOptions {
   subgraphs?: string[];
   /** Minimum percent of fields with production traffic that are tested. Needs usage data in the report. */
   minUsedFields?: number;
+  /** Minimum percent of input fields and enum values with production traffic that a test sent. Needs usage data covering inputs. */
+  minUsedInputs?: number;
 }
 
 export interface GateResult {

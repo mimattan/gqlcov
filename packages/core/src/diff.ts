@@ -1,4 +1,4 @@
-import { UNGATED_SUMMARY_KEYS, type CoverageDiff, type CoverageReport, type CoverageSummary, type GateOptions, type GateResult } from "./types.js";
+import { UNGATED_SUMMARY_KEYS, type CoverageDiff, type CoverageReport, type CoverageSummary, type GateOptions, type GateResult, type UsageJoin } from "./types.js";
 
 /** Flatten every coverable element to "path -> covered?" */
 export function coveredPaths(r: CoverageReport): Map<string, boolean> {
@@ -84,13 +84,24 @@ export function gate(report: CoverageReport, options: GateOptions): GateResult {
     const u = report.usage;
     if (!u) failures.push(`--min-used-fields needs production usage in the report (gqlcov report --usage)`);
     else if (u.usedFields.percent < options.minUsedFields)
-      failures.push(`${u.usedFields.percent}% of fields with production traffic are tested, below the minimum ${options.minUsedFields}% (${u.untestedUsed.length} untested: ${u.untestedUsed.slice(0, 10).map((x) => x.path).join(", ")}${u.untestedUsed.length > 10 ? ", ..." : ""})`);
+      failures.push(`${u.usedFields.percent}% of fields with production traffic are tested, below the minimum ${options.minUsedFields}% (${listUntested(u.untestedUsed, "field")})`);
+  }
+  if (options.minUsedInputs !== undefined) {
+    const u = report.usage?.usedInputs;
+    if (!u) failures.push(`--min-used-inputs needs production usage of input fields and enum values in the report (gqlcov usage apollo provides it)`);
+    else if (u.percent < options.minUsedInputs)
+      failures.push(`${u.percent}% of input fields and enum values with production traffic are sent by a test, below the minimum ${options.minUsedInputs}% (${listUntested(report.usage!.untestedUsed, "input")})`);
   }
   if (d && d.lostCoverage.length > 0) {
     const inScope = options.subgraphs?.length ? d.lostCoverage.filter((p) => pathInSubgraphs(report, p, options.subgraphs!)) : d.lostCoverage;
     if (inScope.length > 0) failures.push(`lost coverage on: ${inScope.slice(0, 20).join(", ")}${inScope.length > 20 ? ` and ${inScope.length - 20} more` : ""}`);
   }
   return { passed: failures.length === 0, failures };
+}
+
+function listUntested(list: UsageJoin["untestedUsed"], which: "field" | "input"): string {
+  const paths = list.filter((x) => (which === "field") === (x.kind === "field")).map((x) => x.path);
+  return `${paths.length} untested: ${paths.slice(0, 10).join(", ")}${paths.length > 10 ? ", ..." : ""}`;
 }
 
 /** Whether a "Type", "Type.field", "Type.field(arg)", "Input.field" or "Enum.VALUE" path belongs to one of the subgraphs. */

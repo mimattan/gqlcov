@@ -31,7 +31,7 @@ describe("renderHtml", () => {
     run: { sha: "0123456789abcdef", branch: "main" },
     subgraphSdls: { courts: `type Court { id: ID!, status: Status! } enum Status { OPEN CLOSED } type Query { courts: [Court!]! }`, ops: `type Mutation { addCourt(input: CourtInput!): Court } input CourtInput { name: String! }` },
   });
-  applyUsage(report, { source: "apollo g@current", from: "2026-10-01T00:00:00Z", to: "2026-10-31T00:00:00Z", fields: { "Query.courts": 12_000, "Court.id": 5, "Court.status": 0, "Query.gone": 1 } });
+  applyUsage(report, { source: "apollo g@current", from: "2026-10-01T00:00:00Z", to: "2026-10-31T00:00:00Z", fields: { "Query.courts": 12_000, "Court.id": 5, "Court.status": 0, "Query.gone": 1, "CourtInput.tags": 40, "CourtInput.name": 2, "Surface.HARD": 3, "Status.OPEN": 8 } });
   const html = renderHtml(report, schema);
 
   it("shows run metadata, operation counts and every ledger number", () => {
@@ -64,10 +64,10 @@ describe("renderHtml", () => {
 
   it("shows input fields as never sent, sent only, or sent and omitted, with nulls and required marks", () => {
     const input = between(html, 'data-n="courtinput"', "</details>");
-    expect(input).toContain(`<li class="on" data-n="name" data-g="ops" data-t="add court\nadd court twice"><span class="fname">name<span class='req'>!</span></span><span class="hits"><span class="by" title="Covered by: add court, add court twice">add court +1</span>sent 2</span>`);
+    expect(input).toContain(`<li class="on" data-n="name" data-g="ops" data-t="add court\nadd court twice"><span class="fname">name<span class='req'>!</span></span><span class="hits"><span class="by" title="Covered by: add court, add court twice">add court +1</span><span class="prod" title="production requests in the usage window">2 in prod</span>sent 2</span>`);
     expect(input).toContain(`<li class="on" data-n="note" data-g="ops" data-t="add court"><span class="fname">note</span><span class="hits"><span class="by" title="Covered by: add court">add court</span>sent 1, omitted 1, null 1</span>`);
     expect(input).toContain(`<li class="half" data-n="ok" data-g="ops" data-t="add court\nadd court twice">`);
-    expect(input).toContain(`<li class="off" data-n="tags" data-g="ops"><span class="fname">tags</span><span class="hits">never sent</span>`);
+    expect(input).toContain(`<li class="off" data-n="tags" data-g="ops"><span class="fname">tags</span><span class="hits"><span class="prod risk" title="production requests in the usage window">40 in prod</span>never sent</span>`);
   });
 
   it("scores input enums on values sent and output-only enums on values returned", () => {
@@ -76,7 +76,7 @@ describe("renderHtml", () => {
     expect(html).toMatch(/data-n="open"[^>]*><span class="fname">OPEN<\/span><span class="hits">in 1 responses<\/span>/);
     expect(html).toMatch(/data-n="closed"[^>]*><span class="fname">CLOSED<\/span><span class="hits">not seen in responses<\/span>/);
     expect(html).toMatch(/data-n="clay" data-t="add court"><span class="fname">CLAY<\/span><span class="hits"><span class="by"[^>]*>add court<\/span>sent 1<\/span>/);
-    expect(html).toMatch(/data-n="hard"><span class="fname">HARD<\/span><span class="hits">never sent<\/span>/);
+    expect(html).toMatch(/data-n="hard"><span class="fname">HARD<\/span><span class="hits"><span class="prod risk"[^>]*>3 in prod<\/span>never sent<\/span>/);
   });
 
   it("renders the production usage section with every list", () => {
@@ -86,6 +86,18 @@ describe("renderHtml", () => {
     expect(usage).toContain("Tested, no production traffic");
     expect(usage).toContain("No traffic and no test: deprecation candidates");
     expect(usage).toContain("In usage data but not in the schema");
+  });
+
+  it("shows production traffic on input fields and input enum values", () => {
+    expect(html).toContain(`<span class="ledger-label">Production inputs sent by a test<small>`);
+    const input = between(html, 'data-n="courtinput"', "</details>");
+    expect(input).toContain('<span class="prod risk" title="production requests in the usage window">40 in prod</span>never sent');
+    expect(input).toContain('<span class="prod" title="production requests in the usage window">2 in prod</span>sent 2');
+    expect(html).toMatch(/data-n="open"[^>]*><span class="fname">OPEN<\/span><span class="hits">in 1 responses<\/span>/); // output-only: no traffic badge
+    const usage = between(html, '<section class="usage">', "</section>");
+    expect(usage).toContain('CourtInput.tags <span class="kind">input</span>');
+    expect(usage).toContain('Surface.HARD <span class="kind">enum value</span>');
+    expect(usage).toContain("3 input fields and enum values had traffic; a test sent 1 of them.");
   });
 
   it("renders the subgraph table and filter", () => {
