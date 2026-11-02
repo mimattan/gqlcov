@@ -25,3 +25,5 @@ jobs:
         with:
           name: example-gqlcov-report
           path: examples/yoga-e2e/.gqlcov/report.*
+          include-hidden-files: true   # the report lives in .gqlcov/, which upload-artifact skips by default
+          if-no-files-found: error
