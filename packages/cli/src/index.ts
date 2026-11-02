@@ -2,9 +2,9 @@ import { Command } from "commander";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { computeCoverage, diffReports, gate, mergeReports, parsePersistedManifest, parseUsage, readCaptures, uncovered, toIstanbul, toLcov, DEFAULT_CAPTURE_DIR, type CoverageReport } from "@gqlcov/core";
-import { lexicographicSortSchema, printSchema } from "graphql";
 import { renderHtml } from "./html.js";
-import { loadSchemaFrom } from "./schema-source.js";
+import { isRemotePointer as isRemote, loadSchema } from "./schema-source.js";
+import { fetchApolloUsage, fetchCosmoUsage } from "./registry.js";
 
 const { version } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
 const readReport = (p: string): CoverageReport => JSON.parse(readFileSync(p, "utf8")) as CoverageReport;
@@ -77,13 +77,13 @@ export function buildCli(): Command {
   program
     .command("report")
     .description("Compute a coverage report from captured operations")
-    .requiredOption("-s, --schema <pointer>", "SDL file, introspection JSON file, or http(s) endpoint")
+    .requiredOption("-s, --schema <pointer>", "SDL file, introspection JSON file, http(s) endpoint, apollo:graph@variant (APOLLO_KEY) or cosmo:[namespace/]graph (COSMO_API_KEY)")
     .option("-c, --captures <dir...>", "capture folder(s)", [DEFAULT_CAPTURE_DIR])
     .option("-o, --out <file>", "JSON report path", ".gqlcov/report.json")
     .option("--html <file>", "also write an HTML report")
     .option("--lcov <file>", "also write LCOV (Codecov, Coveralls, SonarQube, genhtml); lines map to the schema file")
     .option("--istanbul <file>", "also write Istanbul coverage-final.json (nyc, istanbul-merge, Jest tooling)")
-    .option("--schema-out <file>", "where to write the SDL that lcov/istanbul refer to when --schema is an endpoint or introspection JSON", ".gqlcov/schema.graphql")
+    .option("--schema-out <file>", "where to write the SDL that lcov/istanbul refer to when --schema is not an SDL file", ".gqlcov/schema.graphql")
     .option("-H, --header <header...>", "header for endpoint introspection, e.g. 'Authorization: Bearer x'")
     .option("--exclude <pattern...>", "exclude patterns: Type, Type.field, Type.field(arg), Input.field; * wildcard")
     .option("--subgraph <name=file...>", "attribute elements to subgraphs from one SDL per subgraph (a composed supergraph needs no option: its @join__ directives are read)")
@@ -95,13 +95,15 @@ export function buildCli(): Command {
     .option("--untested", "print the uncovered list")
     .option("-q, --quiet", "no console summary")
     .action(async (o) => {
-      const schema = await loadSchemaFrom(o.schema, parseHeaders(o.header));
+      const loaded = await loadSchema(o.schema, parseHeaders(o.header), version);
+      const schema = loaded.schema;
       const ops = readCaptures(o.captures);
+      const explicitSubgraphs = readSubgraphSdls(o.subgraph);
       const report = computeCoverage(schema, ops, {
         exclude: o.exclude,
         excludeDeprecated: !o.includeDeprecated,
         run: { sha: o.sha, branch: o.branch, finishedAt: new Date().toISOString() },
-        subgraphSdls: readSubgraphSdls(o.subgraph),
+        subgraphSdls: Object.keys(explicitSubgraphs).length ? explicitSubgraphs : loaded.subgraphSdls,
         usage: o.usage ? parseUsage(readFileSync(o.usage, "utf8")) : undefined,
         persisted: (o.persisted as string[] | undefined)?.map((f) => parsePersistedManifest(readFileSync(f, "utf8"))),
       });
@@ -109,19 +111,13 @@ export function buildCli(): Command {
       if (o.html) writeOut(o.html, renderHtml(report, schema));
       if (o.lcov || o.istanbul) {
         // Line numbers must refer to a file the coverage service can show: the SDL file given, or one we write.
-        let sdlPath: string = o.schema;
-        let sdl: string;
-        if (/^https?:\/\//.test(o.schema) || o.schema.endsWith(".json")) {
-          sdl = printSchema(lexicographicSortSchema(schema));
-          sdlPath = o.schemaOut;
-          writeOut(sdlPath, sdl);
-        } else {
-          sdl = readFileSync(o.schema, "utf8");
-        }
-        if (o.lcov) writeOut(o.lcov, toLcov(report, sdl, sdlPath));
-        if (o.istanbul) writeOut(o.istanbul, JSON.stringify(toIstanbul(report, sdl, sdlPath)));
+        const sdlPath: string = loaded.isSdlFile ? o.schema : o.schemaOut;
+        if (!loaded.isSdlFile) writeOut(sdlPath, loaded.sdl);
+        if (o.lcov) writeOut(o.lcov, toLcov(report, loaded.sdl, sdlPath));
+        if (o.istanbul) writeOut(o.istanbul, JSON.stringify(toIstanbul(report, loaded.sdl, sdlPath)));
       }
       if (!o.quiet) {
+        if (isRemote(o.schema)) console.log(`gqlcov: schema from ${loaded.label}${loaded.subgraphSdls ? `, ${Object.keys(loaded.subgraphSdls).length} subgraphs` : ""}`);
         printSummary(report);
         printUsage(report);
         if (ops.length === 0) console.log(`  (no captures found in ${o.captures.join(", ")})`);
@@ -132,6 +128,35 @@ export function buildCli(): Command {
           for (const [k, v] of Object.entries(u)) if (v.length) console.log(`\n  ${k} (${v.length}):\n    ${v.join("\n    ")}`);
         }
       }
+    });
+
+  const usage = program.command("usage").description("Fetch production field usage from a schema registry, for gqlcov report --usage");
+  usage
+    .command("apollo")
+    .description("GraphOS Insights: operations that referenced each field (needs APOLLO_KEY)")
+    .argument("<graph@variant>", "graph ref, variant defaults to current")
+    .option("-o, --out <file>", "usage JSON path", ".gqlcov/usage.json")
+    .option("--since <timestamp>", "ISO 8601, or seconds relative to now", "-2592000")
+    .option("--metric <name>", "requests (operations referencing the field) or executions (estimated resolver executions)", "requests")
+    .option("--limit <n>", "maximum fields", (v: string) => parseInt(v, 10), 20000)
+    .action(async (ref: string, o) => {
+      if (o.metric !== "requests" && o.metric !== "executions") throw new Error(`--metric must be requests or executions`);
+      const data = await fetchApolloUsage(ref, { since: o.since, metric: o.metric, limit: o.limit, clientVersion: version });
+      writeOut(o.out, JSON.stringify(data, null, 2));
+      console.log(`gqlcov: ${Object.keys(data.fields).length} fields from ${data.source}, ${data.from?.slice(0, 10)} to ${data.to?.slice(0, 10)}: ${o.out}`);
+    });
+  usage
+    .command("cosmo")
+    .description("Cosmo analytics: requests per field of a federated graph (needs COSMO_API_KEY)")
+    .argument("<[namespace/]graph>", "federated graph, namespace defaults to default")
+    .option("-o, --out <file>", "usage JSON path", ".gqlcov/usage.json")
+    .option("--range <hours>", "window in hours, counted back from now", (v: string) => parseInt(v, 10), 720)
+    .option("--from <iso>", "window start (with --to; overrides --range)")
+    .option("--to <iso>", "window end")
+    .action(async (ref: string, o) => {
+      const data = await fetchCosmoUsage(ref, { range: o.range, from: o.from, to: o.to });
+      writeOut(o.out, JSON.stringify(data, null, 2));
+      console.log(`gqlcov: ${Object.keys(data.fields).length} fields from ${data.source}, ${data.from?.slice(0, 10)} to ${data.to?.slice(0, 10)}: ${o.out}`);
     });
 
   program
