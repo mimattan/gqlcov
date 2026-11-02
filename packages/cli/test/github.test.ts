@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,9 +21,14 @@ function github(pages: { id: number; body?: string }[][], writeStatus = 201) {
   return { fetchImpl, calls };
 }
 const base = { token: "t", repo: "o/r", pr: 7 };
+const GITHUB_ENV = ["GITHUB_TOKEN", "GITHUB_REPOSITORY", "GITHUB_EVENT_PATH", "GITHUB_API_URL"];
 const saved = { ...process.env };
+// On GitHub Actions these point at the real run (a pull request event, a token); no test may read them by accident.
+beforeEach(() => {
+  for (const k of GITHUB_ENV) delete process.env[k];
+});
 afterEach(() => {
-  for (const k of ["GITHUB_TOKEN", "GITHUB_REPOSITORY", "GITHUB_EVENT_PATH", "GITHUB_API_URL"]) {
+  for (const k of GITHUB_ENV) {
     if (saved[k] === undefined) delete process.env[k];
     else process.env[k] = saved[k];
   }
@@ -59,8 +64,6 @@ describe("upsertPrComment", () => {
   });
 
   it("explains missing settings and failed calls", async () => {
-    delete process.env.GITHUB_TOKEN;
-    delete process.env.GITHUB_REPOSITORY;
     await expect(upsertPrComment({ body: "b", pr: 1 })).rejects.toThrow("GITHUB_TOKEN is not set");
     await expect(upsertPrComment({ body: "b", pr: 1, token: "t" })).rejects.toThrow("GITHUB_REPOSITORY is not set");
     const listFails: HttpLike = async () => ({ ok: false, status: 404, statusText: "Not Found", text: async () => "" });
@@ -106,7 +109,6 @@ describe("prFromEvent", () => {
     expect(prFromEvent(event("comment.json", { issue: { number: 4, pull_request: {} } }))).toBe(4);
     expect(prFromEvent(event("issue.json", { issue: { number: 5 } }))).toBeUndefined();
     expect(prFromEvent(event("push.json", { ref: "refs/heads/main" }))).toBeUndefined();
-    delete process.env.GITHUB_EVENT_PATH;
     expect(prFromEvent()).toBeUndefined();
   });
 });
