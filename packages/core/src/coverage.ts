@@ -24,6 +24,9 @@ import {
 } from "graphql";
 import { Excluder } from "./exclude.js";
 import { schemaHash, toSchema } from "./schema.js";
+import { attributeSubgraphs, subgraphsFromSdls, subgraphsFromSupergraph } from "./subgraphs.js";
+import { applyUsage } from "./usage.js";
+import { resolvePersisted, type PersistedManifest } from "./persisted.js";
 import type {
   CapturedOperation,
   CoverageOptions,
@@ -34,6 +37,7 @@ import type {
   Ratio,
   RunInfo,
   TypeCoverage,
+  UsageData,
   ValueClasses,
 } from "./types.js";
 import { classifyValue, emptyValueClasses } from "./values.js";
@@ -154,12 +158,17 @@ function markEnumReachability(
   }
 }
 
-export function summarise(r: Pick<CoverageReport, "types" | "inputTypes" | "enums">): CoverageSummary {
+/** Summarise the report, or only the elements tagged with one subgraph when `graph` is given. */
+export function summarise(r: Pick<CoverageReport, "types" | "inputTypes" | "enums">, graph?: string): CoverageSummary {
+  const inGraph = (x: { graphs?: string[] }) => graph === undefined || (x.graphs?.includes(graph) ?? false);
   let tC = 0, tT = 0, fC = 0, fT = 0, aC = 0, aT = 0, iC = 0, iT = 0, bC = 0, bT = 0, eC = 0, eT = 0, oC = 0, oT = 0;
   for (const t of Object.values(r.types)) {
-    tT++;
-    if (t.hits > 0) tC++;
+    if (inGraph(t)) {
+      tT++;
+      if (t.hits > 0) tC++;
+    }
     for (const f of Object.values(t.fields)) {
+      if (!inGraph(f)) continue;
       fT++;
       if (f.hits > 0) fC++;
       for (const a of Object.values(f.args)) {
@@ -170,6 +179,7 @@ export function summarise(r: Pick<CoverageReport, "types" | "inputTypes" | "enum
   }
   for (const it of Object.values(r.inputTypes)) {
     for (const f of Object.values(it.fields)) {
+      if (!inGraph(f)) continue;
       iT++;
       if (f.sent > 0) iC++;
       if (!f.required) {
@@ -182,6 +192,7 @@ export function summarise(r: Pick<CoverageReport, "types" | "inputTypes" | "enum
     // Reports written before the input/output split carry neither flag: count them as input, as they were.
     const input = e.input ?? true;
     for (const v of Object.values(e.values)) {
+      if (!inGraph(v)) continue;
       if (input) {
         eT++;
         if (v.hits > 0) eC++;
@@ -249,6 +260,10 @@ export interface RecordResult {
 
 /** Record one captured operation into an existing report. */
 export function recordOperation(report: CoverageReport, schema: GraphQLSchema, op: CapturedOperation): RecordResult {
+  if (!op.document) {
+    report.operations.unresolved = (report.operations.unresolved ?? 0) + 1;
+    return { valid: false, errors: [op.persistedId ? `persisted document ${op.persistedId} not resolved: give its manifest` : "capture has no document"] };
+  }
   let doc;
   try {
     doc = parse(op.document);
@@ -327,6 +342,15 @@ export function recordOperation(report: CoverageReport, schema: GraphQLSchema, o
 
 export interface ComputeOptions extends CoverageOptions {
   run?: RunInfo;
+  /**
+   * Subgraph SDLs by name, to attribute elements to subgraphs. Not needed for a composed supergraph:
+   * its `@join__` directives are read automatically.
+   */
+  subgraphSdls?: Record<string, string>;
+  /** Production field usage to join with the result. */
+  usage?: UsageData;
+  /** Persisted-operation manifests, to resolve captures that only carry a persisted id. */
+  persisted?: PersistedManifest[];
 }
 
 /** Compute a full report from a schema and a list of captured operations. */
@@ -336,10 +360,13 @@ export function computeCoverage(
   options: ComputeOptions = {},
 ): CoverageReport {
   const schema = toSchema(schemaInput);
-  const { run, ...covOptions } = options;
+  const { run, subgraphSdls, usage, persisted, ...covOptions } = options;
   const report = emptyReport(schema, covOptions);
   if (run) report.run = run;
-  for (const op of operations) recordOperation(report, schema, op);
+  for (const op of resolvePersisted([...operations], persisted)) recordOperation(report, schema, op);
   report.summary = summarise(report);
+  const membership = subgraphSdls && Object.keys(subgraphSdls).length ? subgraphsFromSdls(subgraphSdls) : subgraphsFromSupergraph(schema);
+  if (membership) attributeSubgraphs(report, membership);
+  if (usage) applyUsage(report, usage);
   return report;
 }

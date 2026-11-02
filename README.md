@@ -58,7 +58,7 @@ Full combinatorial coverage of input fields is deliberately **not** a metric her
    gqlcov gate .gqlcov/report.json --min-fields 60 --base main-report.json
    ```
 
-   `--schema` accepts an SDL file, an introspection JSON file, or an `http(s)://` endpoint (add `-H "Authorization: Bearer ..."`).
+   `--schema` accepts an SDL file, an introspection JSON file, an `http(s)://` endpoint (add `-H "Authorization: Bearer ..."`), or a schema registry: `apollo:graph@variant` (GraphOS, `APOLLO_KEY`) and `cosmo:namespace/graph` (Cosmo, `COSMO_API_KEY`).
 
 Console output looks like:
 
@@ -71,6 +71,71 @@ gqlcov: 5 operations (3 queries, 2 mutations, 0 subscriptions), schema 9c5b5e1ae
   Optional inputs sent and omitted    28.57%  (2/7)
   Enum values                         42.86%  (3/7)
 ```
+
+## Persisted queries
+
+Clients on Apollo persisted query lists, automatic persisted queries, Relay persisted documents or Cosmo persisted operations send an id instead of the document. The server plugins are unaffected; the Playwright capture records the id and resolves it in one of three ways:
+
+- At capture time, from a manifest: `captureGraphQL(page, { manifest: "persisted-query-manifest.json" })`. Apollo's manifest, Relay's `{ id: text }` output and any `[{ id, body }]` array are accepted.
+- Automatically for APQ: a cache miss sends both hash and document, and the hash is reused for later hash-only requests in the same run, as well as across captures at report time.
+- At report time: `gqlcov report --persisted persisted-query-manifest.json`.
+
+Captures that stay unresolved are counted as `unresolved` and listed in the console, never silently dropped.
+
+## Schema registries: Apollo GraphOS and WunderGraph Cosmo
+
+No schema file to check in: point `--schema` at the registry.
+
+```sh
+export APOLLO_KEY=service:...        # graph or personal key
+gqlcov report -s apollo:my-graph@current
+
+export COSMO_API_KEY=...
+gqlcov report -s cosmo:default/my-graph
+```
+
+`apollo:` fetches the variant's latest composed supergraph (with its `@join__` directives, so coverage is split per subgraph) and falls back to the latest published schema for a monograph. `cosmo:` fetches the router schema and the SDL of every subgraph from the latest composition, and attributes coverage per subgraph from those. `APOLLO_REGISTRY_URL` and `COSMO_API_URL` override the endpoints. LCOV and Istanbul output refer to the SDL written to `--schema-out`.
+
+## Production usage: test what is actually called
+
+Both registries know which fields production traffic uses. Join that with coverage and the question "what should we test next" has a ranked answer:
+
+```sh
+gqlcov usage apollo my-graph@current --since -2592000 -o .gqlcov/usage.json    # GraphOS Insights, last 30 days
+gqlcov usage cosmo default/my-graph --range 720 -o .gqlcov/usage.json           # Cosmo analytics, last 30 days
+gqlcov report -s apollo:my-graph@current --usage .gqlcov/usage.json --html .gqlcov/report.html
+gqlcov gate .gqlcov/report.json --min-used-fields 95
+```
+
+The report then lists, with request counts:
+
+- **Used in production, never tested**: the risk list, most requested first. `--min-used-fields` gates on the share of fields with traffic that a test requested.
+- **Tested, no production traffic**: tests that protect nothing yet, or traffic that moved.
+- **No traffic and no test**: deprecation candidates.
+- **In usage data but not in the schema**: removed fields still being called.
+
+The usage file is plain JSON, `{ "fields": { "Type.field": requests } }`, so any other analytics source can produce it. Apollo's `--metric executions` uses estimated resolver executions instead of referencing operations.
+
+## Federation: coverage per subgraph
+
+Give gqlcov the composed supergraph and every number is also reported per subgraph, so the team that owns `players` sees and gates only its own surface:
+
+```sh
+gqlcov report -s apollo:my-graph@current --html .gqlcov/report.html           # or a file from rover supergraph fetch
+gqlcov report -s cosmo:default/my-graph --html .gqlcov/report.html            # subgraph SDLs are fetched too
+gqlcov gate .gqlcov/report.json --min-fields 70 --subgraph players          # one subgraph
+gqlcov gate .gqlcov/report.json --min-fields 70 --subgraph '*'              # every subgraph must pass
+```
+
+Ownership comes from the `@join__type`, `@join__field` and `@join__enumValue` directives in an Apollo supergraph; `join__*`, `link__*`, `openfed__*`, `_entities` and `_service` are left out of the totals. A type or field defined in several subgraphs counts in each of them.
+
+If you only have the API schema (an introspection endpoint, the router, or Cosmo's composed schema, which carries no join directives), pass one SDL per subgraph instead and ownership is read from what each one defines (`@external` fields are not owned). `cosmo:` does this for you; by hand:
+
+```sh
+gqlcov report -s http://localhost:4000/graphql --subgraph clubs=subgraphs/clubs.graphql players=subgraphs/players.graphql
+```
+
+The console summary gets a subgraph table, the HTML report gets a subgraph section and a filter, `diff` prints per-subgraph deltas, and `gate --subgraph` applies thresholds and the no-decrease check to the chosen subgraphs only. In the report JSON, every element carries `graphs` and `report.subgraphs` holds one summary per subgraph.
 
 ## Join with code coverage (Codecov, SonarQube, Coveralls, nyc)
 
@@ -104,10 +169,12 @@ When `--schema` is an endpoint or introspection JSON there is no SDL file for th
 ## CLI
 
 ```
-gqlcov report  -s <schema> [-c <dir>...] [-o report.json] [--html out.html] [--lcov lcov.info] [--istanbul coverage-final.json] [--exclude <pattern>...] [--include-deprecated] [--untested] [--sha] [--branch]
+gqlcov report  -s <schema> [-c <dir>...] [-o report.json] [--html out.html] [--lcov lcov.info] [--istanbul coverage-final.json] [--exclude <pattern>...] [--subgraph name=file...] [--usage usage.json] [--persisted manifest.json...] [--include-deprecated] [--untested] [--sha] [--branch]
+gqlcov usage   apollo <graph@variant> [--since ts] [--metric requests|executions] [-o usage.json]
+gqlcov usage   cosmo <[namespace/]graph> [--range hours | --from iso --to iso] [-o usage.json]
 gqlcov merge   <report>... -o merged.json          # parallel shards
 gqlcov diff    <base> <head> [--json]
-gqlcov gate    <report> [--min-fields n] [--min-input-fields n] [--min-enum-values n] [--base report.json] [--tolerance points]
+gqlcov gate    <report> [--min-fields n] [--min-input-fields n] [--min-enum-values n] [--base report.json] [--tolerance points] [--subgraph name...|'*'] [--min-used-fields n]
 ```
 
 Exclude patterns match `Type`, `Type.field`, `Type.field(arg)`, `Input.field` or `Enum.VALUE`, with `*` as a wildcard inside one segment: `--exclude "Query.__*" "Mutation.internal*" "LegacyInput.*"`. Deprecated elements and introspection types are excluded by default.
@@ -167,10 +234,9 @@ cd examples/yoga-e2e && npm run e2e     # capture -> report -> html -> gate agai
 - Per-field join with resolver code coverage (Apollo Server, TypeScript): wrap resolvers to record which resolver ran for which schema field, then show both numbers per field.
 - Test attribution: join the capture `source` label with per-test code coverage to answer "which test owns this field".
 - Pairwise input-field state reporting (non-gating).
-- Cypress helper and a standalone reverse proxy for servers outside your control.
+- Cypress helper and a standalone reverse proxy for servers outside your control (a router in front of the subgraphs, for instance).
 - Map uncovered fields back to the test that should own them, using the `source` label.
 - GitHub Action with PR annotations.
-- Federation: coverage per subgraph.
 
 ## Releasing
 

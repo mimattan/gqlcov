@@ -4,6 +4,7 @@ import type { CoverageReport, Ratio } from "@gqlcov/core";
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const pct = (c: number, t: number) => (t === 0 ? 100 : Math.round((c / t) * 1000) / 10);
 const cls = (p: number) => (p >= 80 ? "good" : p >= 40 ? "mid" : p > 0 ? "low" : "none");
+const fmtRequests = (n: number) => (n >= 1e6 ? `${Math.round(n / 1e5) / 10}M` : n >= 1e4 ? `${Math.round(n / 1e3)}k` : String(n));
 
 function ledger(label: string, r: Ratio, note?: string): string {
   return `<div class="ledger-row"><div class="ledger-head"><span class="ledger-label">${esc(label)}${note ? `<small>${esc(note)}</small>` : ""}</span><span class="ledger-num ${cls(r.percent)}">${r.percent}<span class="unit">%</span></span></div><div class="track"><span class="fill ${cls(r.percent)}" style="width:${r.percent}%"></span></div><div class="ledger-sub">${r.covered} of ${r.total}</div></div>`;
@@ -14,7 +15,8 @@ function miniBar(covered: number, total: number): string {
   return `<span class="mini"><span class="mini-track"><span class="fill ${cls(p)}" style="width:${p}%"></span></span><span class="mini-num">${covered}/${total}</span></span>`;
 }
 
-interface Row { name: string; covered: number; total: number; body: string; kind: string; uncovered: boolean }
+interface Row { name: string; covered: number; total: number; body: string; kind: string; uncovered: boolean; graphs?: string[] }
+const gAttr = (graphs?: string[]) => (graphs ? ` data-g="${esc(graphs.join(" "))}"` : "");
 
 function typeRow(report: CoverageReport, tn: string, label?: string): Row | null {
   const t = report.types[tn];
@@ -25,10 +27,11 @@ function typeRow(report: CoverageReport, tn: string, label?: string): Row | null
     .map(([fn, f]) => {
       const args = Object.entries(f.args);
       const argText = args.length ? `<span class="args">(${args.map(([an, a]) => `<span class="${a.hits > 0 ? "on" : "off"}" title="${a.hits} hits">${esc(an)}</span>`).join(", ")})</span>` : "";
-      return `<li class="${f.hits > 0 ? "on" : "off"}" data-n="${esc(fn.toLowerCase())}"><span class="fname">${esc(fn)}${argText}</span><span class="hits">${f.hits > 0 ? `${f.hits}×` : "never"}</span></li>`;
+      const prod = f.requests !== undefined ? `<span class="prod${f.requests > 0 && f.hits === 0 ? " risk" : ""}" title="production requests in the usage window">${f.requests > 0 ? `${fmtRequests(f.requests)} in prod` : "no prod traffic"}</span>` : "";
+      return `<li class="${f.hits > 0 ? "on" : "off"}" data-n="${esc(fn.toLowerCase())}"${gAttr(f.graphs)}><span class="fname">${esc(fn)}${argText}</span><span class="hits">${prod}${f.hits > 0 ? `${f.hits}×` : "never"}</span></li>`;
     })
     .join("");
-  return { name: label ?? tn, covered, total: fields.length, body: `<ul class="fields">${lines}</ul>`, kind: t.kind === "INTERFACE" ? "interface" : "type", uncovered: covered < fields.length };
+  return { name: label ?? tn, covered, total: fields.length, body: `<ul class="fields">${lines}</ul>`, kind: t.kind === "INTERFACE" ? "interface" : "type", uncovered: covered < fields.length, graphs: t.graphs };
 }
 
 function inputRow(report: CoverageReport, tn: string): Row {
@@ -39,10 +42,10 @@ function inputRow(report: CoverageReport, tn: string): Row {
     .map(([fn, f]) => {
       const state = f.sent === 0 ? "off" : !f.required && f.omitted === 0 ? "half" : "on";
       const detail = f.sent === 0 ? "never sent" : `sent ${f.sent}${f.required ? "" : `, omitted ${f.omitted}`}${f.values.null ? `, null ${f.values.null}` : ""}`;
-      return `<li class="${state}" data-n="${esc(fn.toLowerCase())}"><span class="fname">${esc(fn)}${f.required ? "<span class='req'>!</span>" : ""}</span><span class="hits">${detail}</span></li>`;
+      return `<li class="${state}" data-n="${esc(fn.toLowerCase())}"${gAttr(f.graphs)}><span class="fname">${esc(fn)}${f.required ? "<span class='req'>!</span>" : ""}</span><span class="hits">${detail}</span></li>`;
     })
     .join("");
-  return { name: tn, covered, total: fields.length, body: `<ul class="fields">${lines}</ul>`, kind: "input", uncovered: covered < fields.length };
+  return { name: tn, covered, total: fields.length, body: `<ul class="fields">${lines}</ul>`, kind: "input", uncovered: covered < fields.length, graphs: t.graphs };
 }
 
 /** Input-reachable enums are scored on values sent; output-only enums on values seen in responses. */
@@ -56,12 +59,12 @@ function enumRow(report: CoverageReport, en: string): Row {
     const parts = [input ? (v.hits > 0 ? `sent ${v.hits}` : "never sent") : "", e.output ? (v.observed ? `in ${v.observed} responses` : "not seen in responses") : ""];
     return parts.filter(Boolean).join(", ");
   };
-  const lines = values.map(([vn, v]) => `<li class="${isOn(v) ? "on" : "off"}" data-n="${esc(vn.toLowerCase())}"><span class="fname">${esc(vn)}</span><span class="hits">${detail(v)}</span></li>`).join("");
-  return { name: en, covered, total: values.length, body: `<ul class="fields">${lines}</ul>`, kind: input ? "enum" : "out enum", uncovered: covered < values.length };
+  const lines = values.map(([vn, v]) => `<li class="${isOn(v) ? "on" : "off"}" data-n="${esc(vn.toLowerCase())}"${gAttr(v.graphs)}><span class="fname">${esc(vn)}</span><span class="hits">${detail(v)}</span></li>`).join("");
+  return { name: en, covered, total: values.length, body: `<ul class="fields">${lines}</ul>`, kind: input ? "enum" : "out enum", uncovered: covered < values.length, graphs: e.graphs };
 }
 
 function renderRow(r: Row, open = false): string {
-  return `<details class="row ${r.uncovered ? "has-gap" : "full"}" data-n="${esc(r.name.toLowerCase())}"${open ? " open" : ""}><summary><div class="sum"><span class="rname"><span class="kind">${r.kind}</span>${esc(r.name)}</span>${miniBar(r.covered, r.total)}</div></summary>${r.body}</details>`;
+  return `<details class="row ${r.uncovered ? "has-gap" : "full"}" data-n="${esc(r.name.toLowerCase())}"${gAttr(r.graphs)}${open ? " open" : ""}><summary><div class="sum"><span class="rname"><span class="kind">${r.kind}</span>${esc(r.name)}</span>${miniBar(r.covered, r.total)}</div></summary>${r.body}</details>`;
 }
 
 /** Root operation types and the namespace objects their fields return, e.g. Query.competition -> CompetitionQueries. */
@@ -113,8 +116,31 @@ function rootSections(report: CoverageReport, schema?: GraphQLSchema): string {
     .join("");
 }
 
+function usageSection(report: CoverageReport): string {
+  const u = report.usage;
+  if (!u) return "";
+  const where = [u.source, u.from && u.to ? `${u.from.slice(0, 10)} to ${u.to.slice(0, 10)}` : undefined].filter((x): x is string => !!x).map(esc).join(", ");
+  const risk = u.untestedUsed.length
+    ? `<ul class="fields">${u.untestedUsed.map((x) => `<li class="off"><span class="fname">${esc(x.path)}</span><span class="hits"><span class="prod risk">${fmtRequests(x.requests)} requests</span>never tested</span></li>`).join("")}</ul>`
+    : `<p class="empty">Every field with production traffic was requested by a test.</p>`;
+  const list = (title: string, items: string[]) => items.length ? `<details class="row aux"><summary><div class="sum"><span class="rname">${title}</span><span class="mini-num">${items.length}</span></div></summary><ul class="fields">${items.map((p) => `<li class="off"><span class="fname">${esc(p)}</span></li>`).join("")}</ul></details>` : "";
+  return `<section class="usage"><h2>Production usage <span class="h2-note">${where}</span></h2><p class="hint">${u.usedFields.total} fields had production traffic; ${u.usedFields.covered} of them were requested by a test.</p><div class="row risk-box"><div class="risk-head">Used in production, never tested <span class="h2-note">${u.untestedUsed.length}</span></div>${risk}</div>${list("Tested, no production traffic", u.testedUnused)}${list("No traffic and no test: deprecation candidates", u.unusedUntested)}${list("In usage data but not in the schema", u.unknown)}</section>`;
+}
+
+function subgraphTable(report: CoverageReport): string {
+  const names = Object.keys(report.subgraphs ?? {});
+  if (!names.length) return "";
+  const cell = (r: Ratio) => `<td><span class="mini"><span class="mini-track"><span class="fill ${cls(r.percent)}" style="width:${r.percent}%"></span></span><span class="mini-num">${r.percent}%</span></span><small>${r.covered}/${r.total}</small></td>`;
+  const rows = names.map((n) => {
+    const g = report.subgraphs![n];
+    return `<tr><th scope="row"><button type="button" class="sg-pick" data-sg="${esc(n)}">${esc(n)}</button></th>${cell(g.fields)}${cell(g.arguments)}${cell(g.inputFields)}${cell(g.enumValues)}</tr>`;
+  });
+  return `<section class="subgraphs"><h2>Subgraphs <span class="h2-note">${names.length}</span></h2><p class="hint">Shared types and fields count in every subgraph that defines them. Click a name to filter the report.</p><table class="sg"><thead><tr><th>Subgraph</th><th>Output fields</th><th>Arguments</th><th>Input fields</th><th>Enum values</th></tr></thead><tbody>${rows.join("")}</tbody></table></section>`;
+}
+
 export function renderHtml(report: CoverageReport, schema?: GraphQLSchema): string {
   const s = report.summary;
+  const subgraphNames = Object.keys(report.subgraphs ?? {});
   const ops = report.operations;
   const rootNames = new Set(["Query", "Mutation", "Subscription"]);
   const typeRows = Object.keys(report.types).filter((n) => !rootNames.has(n)).sort().map((n) => typeRow(report, n)!).map((r) => renderRow(r)).join("");
@@ -163,9 +189,16 @@ h2{font-size:17px;font-weight:650;margin:30px 0 8px}.h2-note{color:var(--ink2);f
 li.on .fname{color:var(--good)}li.half .fname{color:var(--mid)}li.off .fname{color:var(--ink)}
 .args{color:var(--ink2)}.args .on{color:var(--good)}.args .off{color:var(--ink2)}.req{color:var(--low);margin-left:1px}
 .legend{color:var(--ink2);font-size:12.5px;margin:0 0 10px}
-body.only-gaps .row.full,body.only-gaps li.on{display:none}
+body.only-gaps .row.full:not(.aux),body.only-gaps li.on{display:none}
 .hidden{display:none!important}
 .empty{color:var(--ink2);font-size:14px;padding:12px 0}
+.prod{display:inline-block;margin-right:10px;padding:1px 7px;border-radius:10px;background:var(--track);color:var(--ink2);font-size:11.5px}.prod.risk{background:var(--low);color:#fff}
+.usage{margin-bottom:28px}.risk-box{padding:0}.risk-head{padding:10px 14px;font-weight:550}.risk-box .fields{border-top:1px solid var(--line)}
+.subgraphs{margin-bottom:28px}.sg{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line);border-radius:8px;font-size:13.5px}
+.sg th,.sg td{text-align:left;padding:8px 12px;border-bottom:1px solid var(--line);vertical-align:middle}.sg tbody tr:last-child td,.sg tbody tr:last-child th{border-bottom:0}.sg thead th{color:var(--ink2);font-weight:500;font-size:12.5px}
+.sg td .mini{width:auto;min-width:120px}.sg td small{display:block;color:var(--ink2);font-size:11.5px}.sg-pick{font:inherit;font-weight:550;background:none;border:0;padding:0;color:var(--accent);cursor:pointer;text-align:left}
+.toolbar select{font:inherit;font-size:13.5px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink)}
+@media(max-width:640px){.sg thead{display:none}.sg tr{display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;padding:8px 12px;border-bottom:1px solid var(--line)}.sg th,.sg td{border:0;padding:2px 0}.sg th{grid-column:1/-1}}
 @media(max-width:520px){main{padding:20px 14px 60px}h1{font-size:22px}.ledger{padding:4px 14px 10px}.ledger-num{font-size:26px}.row summary{padding:10px 12px}.sum{flex-wrap:wrap;gap:6px}.mini{flex:1 1 100%}.kind{width:auto;margin-right:8px}}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 </style></head><body>
@@ -182,9 +215,12 @@ ${ledger("Optional input fields, both states", s.inputFieldsBothStates, "seen se
 ${ledger("Enum values", s.enumValues, "sent as input at least once; enums a client can send")}
 ${s.enumValuesObserved ? ledger("Enum values in responses", s.enumValuesObserved, "returned at least once; informational, never gated") : ""}
 ${ledger("Types", s.types, "touched by any operation")}
+${report.usage ? ledger("Production fields tested", report.usage.usedFields, "fields with production traffic that a test requested") : ""}
 </div>
+${usageSection(report)}
 
-<div class="toolbar"><input type="search" id="q" placeholder="Filter types, fields, values…" aria-label="Filter"><label><input type="checkbox" id="gaps"> uncovered only</label><button type="button" id="expand">Expand all</button><button type="button" id="collapse">Collapse</button></div>
+${subgraphTable(report)}
+<div class="toolbar"><input type="search" id="q" placeholder="Filter types, fields, values…" aria-label="Filter">${subgraphNames.length ? `<select id="sg" aria-label="Subgraph"><option value="">All subgraphs</option>${subgraphNames.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join("")}</select>` : ""}<label><input type="checkbox" id="gaps"> uncovered only</label><button type="button" id="expand">Expand all</button><button type="button" id="collapse">Collapse</button></div>
 
 ${rootSections(report, schema)}
 
@@ -195,20 +231,23 @@ ${rootSections(report, schema)}
 </main>
 <script>
 (function(){
-  var q=document.getElementById('q'),gaps=document.getElementById('gaps'),rows=[].slice.call(document.querySelectorAll('details.row'));
+  var q=document.getElementById('q'),gaps=document.getElementById('gaps'),sg=document.getElementById('sg'),rows=[].slice.call(document.querySelectorAll('details.row:not(.aux)'));
+  function inGraph(el,g){if(!g)return true;var d=el.dataset.g;return !!d&&(' '+d+' ').indexOf(' '+g+' ')>=0;}
   function apply(){
-    var term=q.value.trim().toLowerCase();
+    var term=q.value.trim().toLowerCase(),g=sg?sg.value:'';
     rows.forEach(function(r){
       var hit=!term||r.dataset.n.indexOf(term)>=0;
       var items=r.querySelectorAll('li');
-      var any=false;
-      for(var i=0;i<items.length;i++){var m=!term||hit||items[i].dataset.n.indexOf(term)>=0;items[i].classList.toggle('hidden',!m);if(m)any=true;}
-      r.classList.toggle('hidden',!(hit||any));
+      var any=false,tot=0,cov=0;
+      for(var i=0;i<items.length;i++){var ig=inGraph(items[i],g);var m=ig&&(!term||hit||items[i].dataset.n.indexOf(term)>=0);items[i].classList.toggle('hidden',!m);if(m)any=true;if(ig){tot++;if(items[i].classList.contains('on'))cov++;}}
+      r.classList.toggle('hidden',!(hit||any)||(!!g&&tot===0));
       if(term&&!hit&&any)r.open=true;
+      if(g!==undefined){var num=r.querySelector('.mini-num'),fill=r.querySelector('.mini .fill');if(num&&fill){var p=tot===0?100:Math.round(cov/tot*1000)/10;num.textContent=cov+'/'+tot;fill.style.width=p+'%';fill.className='fill '+(p>=80?'good':p>=40?'mid':p>0?'low':'none');}}
     });
     document.querySelectorAll('section').forEach(function(sec){var vis=sec.querySelector('details.row:not(.hidden)');sec.classList.toggle('hidden',!vis&&sec.querySelector('details.row')!==null);});
   }
   q.addEventListener('input',apply);
+  if(sg){sg.addEventListener('change',apply);[].forEach.call(document.querySelectorAll('.sg-pick'),function(b){b.addEventListener('click',function(){sg.value=b.dataset.sg;apply();document.querySelector('.toolbar').scrollIntoView({behavior:'smooth'});});});}
   gaps.addEventListener('change',function(){document.body.classList.toggle('only-gaps',gaps.checked);});
   document.getElementById('expand').addEventListener('click',function(){rows.forEach(function(r){if(!r.classList.contains('hidden'))r.open=true;});});
   document.getElementById('collapse').addEventListener('click',function(){rows.forEach(function(r){r.open=false;});});

@@ -30,37 +30,76 @@ export function diffReports(base: CoverageReport, head: CoverageReport): Coverag
   for (const p of b.keys()) if (!h.has(p)) schemaRemoved.push(p);
   // Keys missing from either side (a report from an older version) have no delta.
   const keys = (Object.keys(head.summary) as (keyof CoverageSummary)[]).filter((k) => base.summary[k]);
-  const delta = Object.fromEntries(keys.map((k) => [k, Math.round((head.summary[k].percent - base.summary[k].percent) * 100) / 100])) as CoverageDiff["delta"];
+  const deltaOf = (b: CoverageSummary, h: CoverageSummary) =>
+    Object.fromEntries(keys.filter((k) => b[k] && h[k]).map((k) => [k, Math.round((h[k].percent - b[k].percent) * 100) / 100])) as CoverageDiff["delta"];
+  const delta = deltaOf(base.summary, head.summary);
+  const shared = Object.keys(head.subgraphs ?? {}).filter((n) => base.subgraphs?.[n]);
+  const subgraphs = shared.length ? Object.fromEntries(shared.map((n) => [n, deltaOf(base.subgraphs![n], head.subgraphs![n])])) : undefined;
   return {
-    base: { summary: base.summary, generatedAt: base.generatedAt },
-    head: { summary: head.summary, generatedAt: head.generatedAt },
+    base: { summary: base.summary, generatedAt: base.generatedAt, ...(base.subgraphs ? { subgraphs: base.subgraphs } : {}) },
+    head: { summary: head.summary, generatedAt: head.generatedAt, ...(head.subgraphs ? { subgraphs: head.subgraphs } : {}) },
     delta,
     newlyCovered: newlyCovered.sort(),
     lostCoverage: lostCoverage.sort(),
     schemaAdded: schemaAdded.sort(),
     schemaRemoved: schemaRemoved.sort(),
+    ...(subgraphs ? { subgraphs } : {}),
   };
 }
 
 export function gate(report: CoverageReport, options: GateOptions): GateResult {
   const failures: string[] = [];
-  const s = report.summary;
-  if (options.minFields !== undefined && s.fields.percent < options.minFields)
-    failures.push(`field coverage ${s.fields.percent}% is below the minimum ${options.minFields}%`);
-  if (options.minInputFields !== undefined && s.inputFields.percent < options.minInputFields)
-    failures.push(`input-field coverage ${s.inputFields.percent}% is below the minimum ${options.minInputFields}%`);
-  if (options.minEnumValues !== undefined && s.enumValues.percent < options.minEnumValues)
-    failures.push(`enum-value coverage ${s.enumValues.percent}% is below the minimum ${options.minEnumValues}%`);
-  if (options.base) {
-    const tol = options.tolerance ?? 0;
-    const d = diffReports(options.base, report);
-    for (const [k, v] of Object.entries(d.delta)) {
-      if (UNGATED_SUMMARY_KEYS.includes(k as keyof CoverageSummary)) continue;
-      if (v < -tol) failures.push(`${k} coverage dropped by ${Math.abs(v)} points (${options.base.summary[k as keyof CoverageSummary].percent}% to ${report.summary[k as keyof CoverageSummary].percent}%)`);
+  const scopes: { label: string; summary: CoverageSummary; baseSummary?: CoverageSummary; delta?: Record<string, number> }[] = [];
+  const d = options.base ? diffReports(options.base, report) : undefined;
+  if (options.subgraphs?.length) {
+    const wanted = options.subgraphs.includes("*") ? Object.keys(report.subgraphs ?? {}) : options.subgraphs;
+    for (const name of wanted) {
+      const summary = report.subgraphs?.[name];
+      if (!summary) {
+        failures.push(`subgraph "${name}" is not in the report${report.subgraphs ? ` (known: ${Object.keys(report.subgraphs).join(", ")})` : " (no subgraph attribution)"}`);
+        continue;
+      }
+      scopes.push({ label: `[${name}] `, summary, baseSummary: options.base?.subgraphs?.[name], delta: d?.subgraphs?.[name] });
     }
-    if (d.lostCoverage.length > 0) failures.push(`lost coverage on: ${d.lostCoverage.slice(0, 20).join(", ")}${d.lostCoverage.length > 20 ? ` and ${d.lostCoverage.length - 20} more` : ""}`);
+  } else {
+    scopes.push({ label: "", summary: report.summary, baseSummary: options.base?.summary, delta: d?.delta });
+  }
+  for (const { label, summary: s, baseSummary, delta } of scopes) {
+    if (options.minFields !== undefined && s.fields.percent < options.minFields)
+      failures.push(`${label}field coverage ${s.fields.percent}% is below the minimum ${options.minFields}%`);
+    if (options.minInputFields !== undefined && s.inputFields.percent < options.minInputFields)
+      failures.push(`${label}input-field coverage ${s.inputFields.percent}% is below the minimum ${options.minInputFields}%`);
+    if (options.minEnumValues !== undefined && s.enumValues.percent < options.minEnumValues)
+      failures.push(`${label}enum-value coverage ${s.enumValues.percent}% is below the minimum ${options.minEnumValues}%`);
+    if (delta && baseSummary) {
+      const tol = options.tolerance ?? 0;
+      for (const [k, v] of Object.entries(delta)) {
+        if (UNGATED_SUMMARY_KEYS.includes(k as keyof CoverageSummary)) continue;
+        if (v < -tol) failures.push(`${label}${k} coverage dropped by ${Math.abs(v)} points (${baseSummary[k as keyof CoverageSummary].percent}% to ${s[k as keyof CoverageSummary].percent}%)`);
+      }
+    }
+  }
+  if (options.minUsedFields !== undefined) {
+    const u = report.usage;
+    if (!u) failures.push(`--min-used-fields needs production usage in the report (gqlcov report --usage)`);
+    else if (u.usedFields.percent < options.minUsedFields)
+      failures.push(`${u.usedFields.percent}% of fields with production traffic are tested, below the minimum ${options.minUsedFields}% (${u.untestedUsed.length} untested: ${u.untestedUsed.slice(0, 10).map((x) => x.path).join(", ")}${u.untestedUsed.length > 10 ? ", ..." : ""})`);
+  }
+  if (d && d.lostCoverage.length > 0) {
+    const inScope = options.subgraphs?.length ? d.lostCoverage.filter((p) => pathInSubgraphs(report, p, options.subgraphs!)) : d.lostCoverage;
+    if (inScope.length > 0) failures.push(`lost coverage on: ${inScope.slice(0, 20).join(", ")}${inScope.length > 20 ? ` and ${inScope.length - 20} more` : ""}`);
   }
   return { passed: failures.length === 0, failures };
+}
+
+/** Whether a "Type", "Type.field", "Type.field(arg)", "Input.field" or "Enum.VALUE" path belongs to one of the subgraphs. */
+function pathInSubgraphs(report: CoverageReport, path: string, subgraphs: string[]): boolean {
+  if (subgraphs.includes("*")) return true;
+  const m = /^([^.(]+)(?:\.([^.(]+))?(?:\(([^)]+)\))?$/.exec(path);
+  if (!m) return false;
+  const [, tn, fn] = m;
+  const el = fn === undefined ? (report.types[tn] ?? report.inputTypes[tn] ?? report.enums[tn]) : (report.types[tn]?.fields[fn] ?? report.inputTypes[tn]?.fields[fn] ?? report.enums[tn]?.values[fn]);
+  return el?.graphs?.some((g) => subgraphs.includes(g)) ?? false;
 }
 
 /** Uncovered elements, grouped, for the "what to test next" list. */

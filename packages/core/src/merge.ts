@@ -1,4 +1,6 @@
 import { summarise } from "./coverage.js";
+import { summariseSubgraphs } from "./subgraphs.js";
+import { summariseUsage } from "./usage.js";
 import type { CoverageReport } from "./types.js";
 import { addValueClasses } from "./values.js";
 
@@ -15,6 +17,7 @@ export function mergeReports(reports: CoverageReport[]): CoverageReport {
     out.operations.mutation += r.operations.mutation;
     out.operations.subscription += r.operations.subscription;
     out.operations.invalid += r.operations.invalid;
+    if (r.operations.unresolved) out.operations.unresolved = (out.operations.unresolved ?? 0) + r.operations.unresolved;
     for (const [k, v] of Object.entries(r.operations.named)) out.operations.named[k] = (out.operations.named[k] ?? 0) + v;
     for (const [tn, t] of Object.entries(r.types)) {
       const ot = out.types[tn];
@@ -52,5 +55,7 @@ export function mergeReports(reports: CoverageReport[]): CoverageReport {
     for (const [k, v] of Object.entries(r.argumentValues)) if (out.argumentValues[k]) out.argumentValues[k] = addValueClasses(out.argumentValues[k], v);
   }
   out.summary = summarise(out);
+  if (out.subgraphs) out.subgraphs = summariseSubgraphs(out);
+  if (out.usage) out.usage = { ...out.usage, ...summariseUsage(out) };
   return out;
 }

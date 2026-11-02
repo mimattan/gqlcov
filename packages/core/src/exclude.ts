@@ -1,3 +1,4 @@
+import { isFederationInternal } from "./federation.js";
 import type { CoverageOptions } from "./types.js";
 
 function globToRegExp(glob: string): RegExp {
@@ -14,9 +15,9 @@ export class Excluder {
     this.patterns = (options.exclude ?? []).map(globToRegExp);
   }
 
-  /** Introspection types (`__Type` etc.) are always excluded. */
+  /** Introspection types (`__Type` etc.) and federation machinery (`join__*`, `_entities`) are always excluded. */
   isExcluded(path: string, deprecated = false): boolean {
-    if (path.startsWith("__")) return true;
+    if (path.startsWith("__") || isFederationInternal(path)) return true;
     if (deprecated && this.excludeDeprecated) return true;
     return this.patterns.some((p) => p.test(path));
   }

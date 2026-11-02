@@ -1,6 +1,6 @@
 {
   "name": "@gqlcov/capture-playwright",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Playwright helper that records GraphQL requests sent by the browser under test, with no server change.",
   "license": "MIT",
   "author": "Michael Mattan",
@@ -44,7 +44,7 @@
     "build": "tsc -b"
   },
   "dependencies": {
-    "@gqlcov/core": "0.1.1"
+    "@gqlcov/core": "0.2.0"
   },
   "peerDependencies": {
     "@playwright/test": ">=1.40"

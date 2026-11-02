@@ -1,7 +1,9 @@
 /** One operation as executed by the server (or seen on the wire) during a test run. */
 export interface CapturedOperation {
-  /** The GraphQL document, printed. */
-  document: string;
+  /** The GraphQL document, printed. Absent when the client sent only a persisted id that the capture layer could not resolve. */
+  document?: string;
+  /** Persisted document id as sent by the client (APQ sha256Hash, a persisted query list id, Relay doc_id, documentId). */
+  persistedId?: string;
   operationName?: string | null;
   variables?: Record<string, unknown> | null;
   /** ISO timestamp of execution. */
@@ -37,12 +39,18 @@ export interface FieldCoverage {
   hits: number;
   deprecated: boolean;
   args: Record<string, ArgCoverage>;
+  /** Subgraphs that resolve this field; set by `attributeSubgraphs`. */
+  graphs?: string[];
+  /** Production requests that selected this field in the usage window; set by `applyUsage`. */
+  requests?: number;
 }
 
 export interface TypeCoverage {
   kind: "OBJECT" | "INTERFACE";
   hits: number;
   fields: Record<string, FieldCoverage>;
+  /** Subgraphs that define this type; set by `attributeSubgraphs`. */
+  graphs?: string[];
 }
 
 /** Value classes observed for a scalar, enum or list position. */
@@ -70,12 +78,14 @@ export interface InputFieldCoverage {
   deprecated: boolean;
   required: boolean;
   values: ValueClasses;
+  graphs?: string[];
 }
 
 export interface InputTypeCoverage {
   /** Number of times a value of this input type was sent. */
   hits: number;
   fields: Record<string, InputFieldCoverage>;
+  graphs?: string[];
 }
 
 export interface EnumValueCoverage {
@@ -84,6 +94,7 @@ export interface EnumValueCoverage {
   /** Operations whose response contained the value. */
   observed: number;
   deprecated: boolean;
+  graphs?: string[];
 }
 
 export interface EnumCoverage {
@@ -92,6 +103,7 @@ export interface EnumCoverage {
   /** Returned by an included output field; only these count toward `enumValuesObserved`. */
   output: boolean;
   values: Record<string, EnumValueCoverage>;
+  graphs?: string[];
 }
 
 export interface Ratio {
@@ -126,6 +138,8 @@ export interface OperationStats {
   named: Record<string, number>;
   /** Documents that failed to parse or validate against the schema. */
   invalid: number;
+  /** Captures that carried only a persisted id no manifest or other capture could resolve. Absent in older reports. */
+  unresolved?: number;
 }
 
 export interface CoverageReport {
@@ -141,17 +155,49 @@ export interface CoverageReport {
   enums: Record<string, EnumCoverage>;
   /** Value classes for top-level arguments, keyed "Type.field(arg)". */
   argumentValues: Record<string, ValueClasses>;
+  /** One summary per subgraph, present when the schema was a supergraph or subgraph SDLs were given. */
+  subgraphs?: Record<string, CoverageSummary>;
+  /** Join with production field usage, present when usage data was given. */
+  usage?: UsageJoin;
+}
+
+/** Production field usage, as `gqlcov usage apollo|cosmo` write it or hand-made: requests per "Type.field". */
+export interface UsageData {
+  /** Where the numbers came from, e.g. "apollo my-graph@current". */
+  source?: string;
+  /** ISO timestamps of the window. */
+  from?: string;
+  to?: string;
+  fields: Record<string, number>;
+}
+
+export interface UsageJoin {
+  source?: string;
+  from?: string;
+  to?: string;
+  /** Output fields with production traffic: how many of them a test requested. */
+  usedFields: Ratio;
+  /** Used in production, never tested: the risk list, most requested first. */
+  untestedUsed: { path: string; requests: number }[];
+  /** Tested but no production traffic in the window. */
+  testedUnused: string[];
+  /** Neither: deprecation candidates. */
+  unusedUntested: string[];
+  /** Usage paths that are not in the (included) schema: removed fields still being called, or excluded ones. */
+  unknown: string[];
 }
 
 export interface CoverageDiff {
-  base: { summary: CoverageSummary; generatedAt: string };
-  head: { summary: CoverageSummary; generatedAt: string };
+  base: { summary: CoverageSummary; generatedAt: string; subgraphs?: Record<string, CoverageSummary> };
+  head: { summary: CoverageSummary; generatedAt: string; subgraphs?: Record<string, CoverageSummary> };
   delta: Record<keyof CoverageSummary, number>;
   newlyCovered: string[];
   lostCoverage: string[];
   /** Fields in head's schema that base did not have, and vice versa. */
   schemaAdded: string[];
   schemaRemoved: string[];
+  /** Per-subgraph deltas, for subgraphs present in both reports. */
+  subgraphs?: Record<string, Record<keyof CoverageSummary, number>>;
 }
 
 export interface GateOptions {
@@ -163,6 +209,10 @@ export interface GateOptions {
   base?: CoverageReport;
   /** Tolerance in percentage points for the no-decrease check. Default 0. */
   tolerance?: number;
+  /** Apply the thresholds and the no-decrease check to these subgraphs instead of the whole schema. "*" means every subgraph in the report. */
+  subgraphs?: string[];
+  /** Minimum percent of fields with production traffic that are tested. Needs usage data in the report. */
+  minUsedFields?: number;
 }
 
 export interface GateResult {
