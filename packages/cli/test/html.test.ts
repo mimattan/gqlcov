@@ -17,9 +17,9 @@ const sdl = /* GraphQL */ `
 `;
 const schema = buildSchema(sdl);
 const ops = [
-  { document: `query Comp { competition { list { id status name(upper: true) } } node(id: "1") { id } }`, responseEnums: { Status: ["OPEN"] } },
-  { document: `mutation Add { addCourt(input: { name: "a", surface: CLAY, note: null, ok: true }) { id } }` },
-  { document: `mutation Add { addCourt(input: { name: "b", ok: false }) { id } }` },
+  { document: `query Comp { competition { list { id status name(upper: true) } } node(id: "1") { id } }`, responseEnums: { Status: ["OPEN"] }, source: "competition" },
+  { document: `mutation Add { addCourt(input: { name: "a", surface: CLAY, note: null, ok: true }) { id } }`, source: "add court" },
+  { document: `mutation Add { addCourt(input: { name: "b", ok: false }) { id } }`, source: "add court twice" },
   { document: `{ nope }` },
 ];
 
@@ -54,7 +54,7 @@ describe("renderHtml", () => {
   });
 
   it("marks arguments, production traffic and interfaces", () => {
-    expect(html).toMatch(/<span class="on" title="1 hits">upper<\/span>/);
+    expect(html).toMatch(/<span class="on" title="1 hits: competition">upper<\/span>/);
     expect(html).toMatch(/<span class="off" title="0 hits">id<\/span>/);
     expect(html).toContain('<span class="prod risk" title="production requests in the usage window">12k in prod</span>');
     expect(html).toContain('<span class="prod" title="production requests in the usage window">5 in prod</span>');
@@ -64,9 +64,9 @@ describe("renderHtml", () => {
 
   it("shows input fields as never sent, sent only, or sent and omitted, with nulls and required marks", () => {
     const input = between(html, 'data-n="courtinput"', "</details>");
-    expect(input).toContain(`<li class="on" data-n="name" data-g="ops"><span class="fname">name<span class='req'>!</span></span><span class="hits">sent 2</span>`);
-    expect(input).toContain(`<li class="on" data-n="note" data-g="ops"><span class="fname">note</span><span class="hits">sent 1, omitted 1, null 1</span>`);
-    expect(input).toContain(`<li class="half" data-n="ok" data-g="ops">`);
+    expect(input).toContain(`<li class="on" data-n="name" data-g="ops" data-t="add court\nadd court twice"><span class="fname">name<span class='req'>!</span></span><span class="hits"><span class="by" title="Covered by: add court, add court twice">add court +1</span>sent 2</span>`);
+    expect(input).toContain(`<li class="on" data-n="note" data-g="ops" data-t="add court"><span class="fname">note</span><span class="hits"><span class="by" title="Covered by: add court">add court</span>sent 1, omitted 1, null 1</span>`);
+    expect(input).toContain(`<li class="half" data-n="ok" data-g="ops" data-t="add court\nadd court twice">`);
     expect(input).toContain(`<li class="off" data-n="tags" data-g="ops"><span class="fname">tags</span><span class="hits">never sent</span>`);
   });
 
@@ -75,7 +75,7 @@ describe("renderHtml", () => {
     expect(html).toContain('<span class="kind">out enum</span>Status');
     expect(html).toMatch(/data-n="open"[^>]*><span class="fname">OPEN<\/span><span class="hits">in 1 responses<\/span>/);
     expect(html).toMatch(/data-n="closed"[^>]*><span class="fname">CLOSED<\/span><span class="hits">not seen in responses<\/span>/);
-    expect(html).toMatch(/data-n="clay"><span class="fname">CLAY<\/span><span class="hits">sent 1<\/span>/);
+    expect(html).toMatch(/data-n="clay" data-t="add court"><span class="fname">CLAY<\/span><span class="hits"><span class="by"[^>]*>add court<\/span>sent 1<\/span>/);
     expect(html).toMatch(/data-n="hard"><span class="fname">HARD<\/span><span class="hits">never sent<\/span>/);
   });
 
@@ -94,6 +94,19 @@ describe("renderHtml", () => {
     expect(html).toContain('data-g="courts"');
   });
 
+  it("labels rows with the tests that covered them and lists every test", () => {
+    expect(html).toContain(`data-t="add court\nadd court twice\ncompetition"`);
+    expect(html).toContain(`<span class="by" title="Covered by: add court, add court twice, competition">add court +2</span>`);
+    expect(html).toContain(`<span class="by" title="Covered by: add court">add court</span>`);
+    expect(html).toContain(`title="1 hits: competition">upper</span>`);
+    expect(html).toContain(`title="0 hits">id</span>`);
+    const tests = between(html, '<section class="tests">', "</section>");
+    expect(tests).toContain('<h2>Tests <span class="h2-note">3</span></h2>');
+    expect(tests).toMatch(/<details class="row aux redundant"><summary><div class="sum"><span class="rname">add court twice<\/span><span class="hits">1 ops, \d+ covered, 0 only here/);
+    expect(tests).toContain("Covers nothing the other tests do not.");
+    expect(tests).toContain('<span class="fname">CourtInput.surface</span><span class="hits">only this test</span>');
+  });
+
   it("renders a bare report: no schema, no operations, no usage or subgraphs, older enum format", () => {
     const bare = computeCoverage(`enum E { A } type Thing { x: Int } type Query { a(e: E): Int, b: Int, t: [Thing] }`, [], { exclude: ["Thing.*"] }) as CoverageReport;
     delete (bare.enums.E as Partial<typeof bare.enums.E>).input;
@@ -107,6 +120,8 @@ describe("renderHtml", () => {
     expect(out).not.toContain('<section class="subgraphs">');
     expect(out).not.toContain('<select id="sg"');
     expect(out).not.toContain("Grouped by namespace");
+    expect(out).not.toContain('<section class="tests">');
+    expect(out).not.toContain('class="by"');
     expect(out).toMatch(/<span class="kind">enum<\/span>E/);
     expect(out).toMatch(/Thing<\/span><span class="mini">.*?width:100%.*?0\/0/); // a type with every field excluded
     expect(out).toMatch(/schema [0-9a-f]+ &nbsp;\/&nbsp; generated/);

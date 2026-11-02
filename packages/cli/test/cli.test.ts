@@ -69,8 +69,9 @@ beforeAll(async () => {
   writeFileSync(at("courts.graphql"), courtsSdl);
   writeFileSync(at("introspection.json"), JSON.stringify(graphqlSync({ schema: buildSchema(sdl), source: getIntrospectionQuery() })));
   const caps = at("captures");
-  writeCapture(caps, { document: `query Clubs { clubs { id name courts(filter: { surface: CLAY }) { id status } } }`, responseEnums: { Status: ["OPEN"] } });
-  writeCapture(caps, { document: `mutation Rename { renameClub(id: "1", name: "x") { id } }` });
+  writeCapture(caps, { document: `query Clubs { clubs { id name courts(filter: { surface: CLAY }) { id status } } }`, responseEnums: { Status: ["OPEN"] }, source: "club list" });
+  writeCapture(caps, { document: `mutation Rename { renameClub(id: "1", name: "x") { id } }`, source: "rename club" });
+  writeCapture(caps, { document: `query Again { clubs { id } }`, source: "club list again" });
   writeCapture(caps, { document: `{ nope }` });
   writeCapture(caps, { persistedId: "p1" });
   writeCapture(caps, { persistedId: "p2" });
@@ -114,7 +115,7 @@ describe("gqlcov report", () => {
     const r = await cli("report", "-s", at("schema.graphql"), "-c", at("captures"), "-o", at("full", "report.json"), "--html", at("full", "report.html"),
       "--lcov", at("full", "lcov.info"), "--istanbul", at("full", "coverage.json"), "--subgraph", `clubs=${at("clubs.graphql")}`, `courts=${at("courts.graphql")}`,
       "--usage", at("usage.json"), "--persisted", at("manifest.json"), "--untested", "--include-deprecated", "--exclude", "Mutation.*");
-    expect(r.out).toContain("gqlcov: 3 operations (2 queries, 1 mutations, 0 subscriptions, 1 invalid, 1 unresolved persisted ids)");
+    expect(r.out).toContain("gqlcov: 4 operations (3 queries, 1 mutations, 0 subscriptions, 1 invalid, 1 unresolved persisted ids)");
     expect(r.out).toMatch(/clubs\s+\d+(\.\d+)?% \(\d+\/\d+\)/);
     expect(r.out).toContain("production usage (hand-made, 2026-10-01 to 2026-10-31)");
     expect(r.out).toMatch(/Court\.surface\s+2\.5M requests/);
@@ -205,6 +206,38 @@ describe("gqlcov usage", () => {
   });
 });
 
+describe("gqlcov tests", () => {
+  let path: string;
+  beforeAll(async () => {
+    await cli("report", "-q", "-s", at("schema.graphql"), "-c", at("captures"), "-o", (path = at("t", "report.json")));
+  });
+
+  it("prints coverage per test and points out tests that add nothing", async () => {
+    const r = await cli("tests", path);
+    expect(r.out).toMatch(/^  Test\s+Ops\s+Fields\s+Args\s+Inputs\s+Enums\s+Only$/m);
+    expect(r.out).toMatch(/^  club list\s+1\s+6\s+1\s+1\s+1\s+\d+$/m);
+    expect(r.out).toMatch(/^  club list again\s+1\s+2\s+0\s+0\s+0\s+0$/m);
+    expect(r.out).toContain("1 of 3 tests cover nothing the others do not");
+  });
+
+  it("lists everything one test covers, as text or JSON", async () => {
+    const r = await cli("tests", path, "--test", "rename club");
+    expect(r.out).toContain("rename club: 1 operations");
+    expect(r.out).toContain("covered by this test only (3):\n    Mutation.renameClub\n");
+    expect(r.out).toContain("  input fields (0)\n");
+    const json = JSON.parse((await cli("tests", path, "--test", "rename club", "--json")).out);
+    expect(json.arguments).toEqual(["Mutation.renameClub(id)", "Mutation.renameClub(name)"]);
+    expect(JSON.parse((await cli("tests", path, "--json")).out)).toHaveLength(3);
+  });
+
+  it("explains unknown tests and reports without test names", async () => {
+    await expect(cli("tests", path, "--test", "nope")).rejects.toThrow('no test named "nope" in the report (tests: club list, club list again, rename club)');
+    await cli("report", "-q", "-s", at("schema.graphql"), "-c", at("empty"), "-o", at("t", "empty.json"));
+    expect((await cli("tests", at("t", "empty.json"))).out).toContain("the report has no test names");
+    await expect(cli("tests", at("t", "empty.json"), "--test", "x")).rejects.toThrow(/^no test named "x" in the report$/);
+  });
+});
+
 describe("gqlcov merge, diff and gate", () => {
   let fullPath: string;
   let shortPath: string;
@@ -216,8 +249,8 @@ describe("gqlcov merge, diff and gate", () => {
 
   it("merges shards", async () => {
     const r = await cli("merge", fullPath, shortPath, "-o", at("g", "merged.json"));
-    expect(r.out).toContain("gqlcov: 2 operations");
-    expect(readJson(at("g", "merged.json")).operations.total).toBe(2);
+    expect(r.out).toContain("gqlcov: 3 operations");
+    expect(readJson(at("g", "merged.json")).operations.total).toBe(3);
   });
 
   it("diffs as text with per-subgraph deltas, and as JSON", async () => {

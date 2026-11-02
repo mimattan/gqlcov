@@ -33,6 +33,8 @@ export interface CoverageOptions {
 export interface ArgCoverage {
   hits: number;
   deprecated: boolean;
+  /** Tests (capture `source` labels) that passed this argument, sorted. Absent when no capture carried a source. */
+  tests?: string[];
 }
 
 export interface FieldCoverage {
@@ -43,6 +45,8 @@ export interface FieldCoverage {
   graphs?: string[];
   /** Production requests that selected this field in the usage window; set by `applyUsage`. */
   requests?: number;
+  /** Tests (capture `source` labels) that requested this field, sorted. */
+  tests?: string[];
 }
 
 export interface TypeCoverage {
@@ -79,6 +83,8 @@ export interface InputFieldCoverage {
   required: boolean;
   values: ValueClasses;
   graphs?: string[];
+  /** Tests that sent this field, sorted. */
+  tests?: string[];
 }
 
 export interface InputTypeCoverage {
@@ -95,6 +101,8 @@ export interface EnumValueCoverage {
   observed: number;
   deprecated: boolean;
   graphs?: string[];
+  /** Tests that sent this value, sorted. */
+  tests?: string[];
 }
 
 export interface EnumCoverage {
@@ -159,6 +167,20 @@ export interface CoverageReport {
   subgraphs?: Record<string, CoverageSummary>;
   /** Join with production field usage, present when usage data was given. */
   usage?: UsageJoin;
+  /** Operations per test (capture `source` label). Absent when no capture carried a source. */
+  tests?: Record<string, number>;
+}
+
+/** What one test covered, from the `tests` lists on each element. Paths as in `uncovered`. */
+export interface TestCoverage {
+  name: string;
+  operations: number;
+  fields: string[];
+  arguments: string[];
+  inputFields: string[];
+  enumValues: string[];
+  /** Elements no other test covers: removing this test loses them. */
+  unique: string[];
 }
 
 /** Production field usage, as `gqlcov usage apollo|cosmo` write it or hand-made: requests per "Type.field". */

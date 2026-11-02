@@ -1,5 +1,5 @@
 import { getNamedType, isListType, isNonNullType, isObjectType, type GraphQLObjectType, type GraphQLSchema } from "graphql";
-import type { CoverageReport, EnumValueCoverage, Ratio } from "@gqlcov/core";
+import { testCoverage, type CoverageReport, type EnumValueCoverage, type Ratio } from "@gqlcov/core";
 import { fmtRequests } from "./format.js";
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
@@ -17,6 +17,9 @@ function miniBar(covered: number, total: number): string {
 
 interface Row { name: string; covered: number; total: number; body: string; kind: string; uncovered: boolean; graphs?: string[] }
 const gAttr = (graphs?: string[]) => (graphs ? ` data-g="${esc(graphs.join(" "))}"` : "");
+/** Test names on a list item: searchable through data-t, readable in a short label with the full list on hover. */
+const tAttr = (tests?: string[]) => (tests ? ` data-t="${esc(tests.join("\n").toLowerCase())}"` : "");
+const byTests = (tests?: string[]) => (tests ? `<span class="by" title="Covered by: ${esc(tests.join(", "))}">${esc(tests[0])}${tests.length > 1 ? ` +${tests.length - 1}` : ""}</span>` : "");
 
 /** A row for an object or interface type; callers only pass types the report has. */
 function typeRow(report: CoverageReport, tn: string, label?: string): Row {
@@ -26,9 +29,9 @@ function typeRow(report: CoverageReport, tn: string, label?: string): Row {
   const lines = fields
     .map(([fn, f]) => {
       const args = Object.entries(f.args);
-      const argText = args.length ? `<span class="args">(${args.map(([an, a]) => `<span class="${a.hits > 0 ? "on" : "off"}" title="${a.hits} hits">${esc(an)}</span>`).join(", ")})</span>` : "";
+      const argText = args.length ? `<span class="args">(${args.map(([an, a]) => `<span class="${a.hits > 0 ? "on" : "off"}" title="${a.hits} hits${a.tests ? `: ${esc(a.tests.join(", "))}` : ""}">${esc(an)}</span>`).join(", ")})</span>` : "";
       const prod = f.requests !== undefined ? `<span class="prod${f.requests > 0 && f.hits === 0 ? " risk" : ""}" title="production requests in the usage window">${f.requests > 0 ? `${fmtRequests(f.requests)} in prod` : "no prod traffic"}</span>` : "";
-      return `<li class="${f.hits > 0 ? "on" : "off"}" data-n="${esc(fn.toLowerCase())}"${gAttr(f.graphs)}><span class="fname">${esc(fn)}${argText}</span><span class="hits">${prod}${f.hits > 0 ? `${f.hits}×` : "never"}</span></li>`;
+      return `<li class="${f.hits > 0 ? "on" : "off"}" data-n="${esc(fn.toLowerCase())}"${gAttr(f.graphs)}${tAttr(f.tests)}><span class="fname">${esc(fn)}${argText}</span><span class="hits">${byTests(f.tests)}${prod}${f.hits > 0 ? `${f.hits}×` : "never"}</span></li>`;
     })
     .join("");
   return { name: label ?? tn, covered, total: fields.length, body: `<ul class="fields">${lines}</ul>`, kind: t.kind === "INTERFACE" ? "interface" : "type", uncovered: covered < fields.length, graphs: t.graphs };
@@ -42,7 +45,7 @@ function inputRow(report: CoverageReport, tn: string): Row {
     .map(([fn, f]) => {
       const state = f.sent === 0 ? "off" : !f.required && f.omitted === 0 ? "half" : "on";
       const detail = f.sent === 0 ? "never sent" : `sent ${f.sent}${f.required ? "" : `, omitted ${f.omitted}`}${f.values.null ? `, null ${f.values.null}` : ""}`;
-      return `<li class="${state}" data-n="${esc(fn.toLowerCase())}"${gAttr(f.graphs)}><span class="fname">${esc(fn)}${f.required ? "<span class='req'>!</span>" : ""}</span><span class="hits">${detail}</span></li>`;
+      return `<li class="${state}" data-n="${esc(fn.toLowerCase())}"${gAttr(f.graphs)}${tAttr(f.tests)}><span class="fname">${esc(fn)}${f.required ? "<span class='req'>!</span>" : ""}</span><span class="hits">${byTests(f.tests)}${detail}</span></li>`;
     })
     .join("");
   return { name: tn, covered, total: fields.length, body: `<ul class="fields">${lines}</ul>`, kind: "input", uncovered: covered < fields.length, graphs: t.graphs };
@@ -59,7 +62,7 @@ function enumRow(report: CoverageReport, en: string): Row {
     const parts = [input ? (v.hits > 0 ? `sent ${v.hits}` : "never sent") : "", e.output ? (v.observed ? `in ${v.observed} responses` : "not seen in responses") : ""];
     return parts.filter(Boolean).join(", ");
   };
-  const lines = values.map(([vn, v]) => `<li class="${isOn(v) ? "on" : "off"}" data-n="${esc(vn.toLowerCase())}"${gAttr(v.graphs)}><span class="fname">${esc(vn)}</span><span class="hits">${detail(v)}</span></li>`).join("");
+  const lines = values.map(([vn, v]) => `<li class="${isOn(v) ? "on" : "off"}" data-n="${esc(vn.toLowerCase())}"${gAttr(v.graphs)}${tAttr(v.tests)}><span class="fname">${esc(vn)}</span><span class="hits">${byTests(v.tests)}${detail(v)}</span></li>`).join("");
   return { name: en, covered, total: values.length, body: `<ul class="fields">${lines}</ul>`, kind: input ? "enum" : "out enum", uncovered: covered < values.length, graphs: e.graphs };
 }
 
@@ -120,6 +123,17 @@ function usageSection(report: CoverageReport): string {
     : `<p class="empty">Every field with production traffic was requested by a test.</p>`;
   const list = (title: string, items: string[]) => items.length ? `<details class="row aux"><summary><div class="sum"><span class="rname">${title}</span><span class="mini-num">${items.length}</span></div></summary><ul class="fields">${items.map((p) => `<li class="off"><span class="fname">${esc(p)}</span></li>`).join("")}</ul></details>` : "";
   return `<section class="usage"><h2>Production usage <span class="h2-note">${where}</span></h2><p class="hint">${u.usedFields.total} fields had production traffic; ${u.usedFields.covered} of them were requested by a test.</p><div class="row risk-box"><div class="risk-head">Used in production, never tested <span class="h2-note">${u.untestedUsed.length}</span></div>${risk}</div>${list("Tested, no production traffic", u.testedUnused)}${list("No traffic and no test: deprecation candidates", u.unusedUntested)}${list("In usage data but not in the schema", u.unknown)}</section>`;
+}
+
+function testsSection(report: CoverageReport): string {
+  const list = testCoverage(report);
+  if (!list.length) return "";
+  const rows = list.map((t) => {
+    const covered = t.fields.length + t.arguments.length + t.inputFields.length + t.enumValues.length;
+    const unique = t.unique.length ? `<ul class="fields">${t.unique.map((p) => `<li class="on"><span class="fname">${esc(p)}</span><span class="hits">only this test</span></li>`).join("")}</ul>` : `<p class="empty">Covers nothing the other tests do not.</p>`;
+    return `<details class="row aux ${t.unique.length ? "" : "redundant"}"><summary><div class="sum"><span class="rname">${esc(t.name)}</span><span class="hits">${t.operations} ops, ${covered} covered, ${t.unique.length} only here</span></div></summary>${unique}</details>`;
+  });
+  return `<section class="tests"><h2>Tests <span class="h2-note">${list.length}</span></h2><p class="hint">From the source label on each capture. "Only here" lists what no other test covers; type a test name in the filter to see everything it touches.</p>${rows.join("")}</section>`;
 }
 
 function subgraphTable(report: CoverageReport): string {
@@ -189,6 +203,8 @@ body.only-gaps .row.full:not(.aux),body.only-gaps li.on{display:none}
 .empty{color:var(--ink2);font-size:14px;padding:12px 0}
 .prod{display:inline-block;margin-right:10px;padding:1px 7px;border-radius:10px;background:var(--track);color:var(--ink2);font-size:11.5px}.prod.risk{background:var(--low);color:#fff}
 .usage{margin-bottom:28px}.risk-box{padding:0}.risk-head{padding:10px 14px;font-weight:550}.risk-box .fields{border-top:1px solid var(--line)}
+.by{display:inline-block;margin-right:10px;color:var(--accent);font-size:11.5px;max-width:220px;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom}
+.tests .row.redundant .rname{color:var(--ink2)}
 .subgraphs{margin-bottom:28px}.sg{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line);border-radius:8px;font-size:13.5px}
 .sg th,.sg td{text-align:left;padding:8px 12px;border-bottom:1px solid var(--line);vertical-align:middle}.sg tbody tr:last-child td,.sg tbody tr:last-child th{border-bottom:0}.sg thead th{color:var(--ink2);font-weight:500;font-size:12.5px}
 .sg td .mini{width:auto;min-width:120px}.sg td small{display:block;color:var(--ink2);font-size:11.5px}.sg-pick{font:inherit;font-weight:550;background:none;border:0;padding:0;color:var(--accent);cursor:pointer;text-align:left}
@@ -215,13 +231,14 @@ ${report.usage ? ledger("Production fields tested", report.usage.usedFields, "fi
 ${usageSection(report)}
 
 ${subgraphTable(report)}
-<div class="toolbar"><input type="search" id="q" placeholder="Filter types, fields, values…" aria-label="Filter">${subgraphNames.length ? `<select id="sg" aria-label="Subgraph"><option value="">All subgraphs</option>${subgraphNames.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join("")}</select>` : ""}<label><input type="checkbox" id="gaps"> uncovered only</label><button type="button" id="expand">Expand all</button><button type="button" id="collapse">Collapse</button></div>
+<div class="toolbar"><input type="search" id="q" placeholder="Filter types, fields, values, tests…" aria-label="Filter">${subgraphNames.length ? `<select id="sg" aria-label="Subgraph"><option value="">All subgraphs</option>${subgraphNames.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join("")}</select>` : ""}<label><input type="checkbox" id="gaps"> uncovered only</label><button type="button" id="expand">Expand all</button><button type="button" id="collapse">Collapse</button></div>
 
 ${rootSections(report, schema)}
 
 <section><h2>All types <span class="h2-note">${Object.keys(report.types).length - [...rootNames].filter((n) => report.types[n]).length}</span></h2>${typeRows}</section>
 <section><h2>Input types <span class="h2-note">${Object.keys(report.inputTypes).length}</span></h2><p class="legend">Green: sent, and omitted too where optional. Amber: sent but never omitted. Plain: never sent. ! marks required fields.</p>${inputRows}</section>
 <section><h2>Enums <span class="h2-note">${Object.keys(report.enums).length}</span></h2><p class="legend">Enums a client can send are scored on values sent. Output-only enums ("out enum") are scored on values seen in responses and do not count toward the enum-values number.</p>${enumRows}</section>
+${testsSection(report)}
 <section><h2>Operations <span class="h2-note">${named.length}</span></h2>${named.length ? `<ul class="fields" style="border:1px solid var(--line);border-radius:8px;background:var(--panel)">${named.map(([n, c]) => `<li class="on"><span class="fname">${esc(n)}</span><span class="hits">${c}×</span></li>`).join("")}</ul>` : `<p class="empty">No operations in this run.</p>`}</section>
 </main>
 <script>
@@ -234,7 +251,7 @@ ${rootSections(report, schema)}
       var hit=!term||r.dataset.n.indexOf(term)>=0;
       var items=r.querySelectorAll('li');
       var any=false,tot=0,cov=0;
-      for(var i=0;i<items.length;i++){var ig=inGraph(items[i],g);var m=ig&&(!term||hit||items[i].dataset.n.indexOf(term)>=0);items[i].classList.toggle('hidden',!m);if(m)any=true;if(ig){tot++;if(items[i].classList.contains('on'))cov++;}}
+      for(var i=0;i<items.length;i++){var ig=inGraph(items[i],g);var m=ig&&(!term||hit||items[i].dataset.n.indexOf(term)>=0||(items[i].dataset.t||'').indexOf(term)>=0);items[i].classList.toggle('hidden',!m);if(m)any=true;if(ig){tot++;if(items[i].classList.contains('on'))cov++;}}
       r.classList.toggle('hidden',!(hit||any)||(!!g&&tot===0));
       if(term&&!hit&&any)r.open=true;
       if(g!==undefined){var num=r.querySelector('.mini-num'),fill=r.querySelector('.mini .fill');if(num&&fill){var p=tot===0?100:Math.round(cov/tot*1000)/10;num.textContent=cov+'/'+tot;fill.style.width=p+'%';fill.className='fill '+(p>=80?'good':p>=40?'mid':p>0?'low':'none');}}

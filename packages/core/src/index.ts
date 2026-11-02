@@ -1,5 +1,6 @@
 export * from "./types.js";
-export { computeCoverage, emptyReport, recordOperation, summarise, walkInputValue } from "./coverage.js";
+export { computeCoverage, emptyReport, recordOperation, summarise, tagTest, walkInputValue } from "./coverage.js";
+export { testCoverage } from "./tests.js";
 export { mergeReports } from "./merge.js";
 export { diffReports, gate, uncovered, coveredPaths } from "./diff.js";
 export { writeCapture, readCaptures, DEFAULT_CAPTURE_DIR } from "./capture.js";

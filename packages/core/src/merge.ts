@@ -1,4 +1,4 @@
-import { summarise } from "./coverage.js";
+import { summarise, tagTest } from "./coverage.js";
 import { summariseSubgraphs } from "./subgraphs.js";
 import { summariseUsage } from "./usage.js";
 import type { CoverageReport } from "./types.js";
@@ -19,6 +19,8 @@ export function mergeReports(reports: CoverageReport[]): CoverageReport {
     out.operations.invalid += r.operations.invalid;
     if (r.operations.unresolved) out.operations.unresolved = (out.operations.unresolved ?? 0) + r.operations.unresolved;
     for (const [k, v] of Object.entries(r.operations.named)) out.operations.named[k] = (out.operations.named[k] ?? 0) + v;
+    for (const [k, v] of Object.entries(r.tests ?? {})) (out.tests ??= {})[k] = (out.tests[k] ?? 0) + v;
+    const union = (into: { tests?: string[] }, from: { tests?: string[] }) => from.tests?.forEach((t) => tagTest(into, t));
     for (const [tn, t] of Object.entries(r.types)) {
       const ot = out.types[tn];
       if (!ot) continue;
@@ -27,7 +29,13 @@ export function mergeReports(reports: CoverageReport[]): CoverageReport {
         const of = ot.fields[fn];
         if (!of) continue;
         of.hits += f.hits;
-        for (const [an, a] of Object.entries(f.args)) if (of.args[an]) of.args[an].hits += a.hits;
+        union(of, f);
+        for (const [an, a] of Object.entries(f.args)) {
+          const oa = of.args[an];
+          if (!oa) continue;
+          oa.hits += a.hits;
+          union(oa, a);
+        }
       }
     }
     for (const [tn, t] of Object.entries(r.inputTypes)) {
@@ -38,6 +46,7 @@ export function mergeReports(reports: CoverageReport[]): CoverageReport {
         const of = ot.fields[fn];
         if (!of) continue;
         of.sent += f.sent;
+        union(of, f);
         of.omitted += f.omitted;
         of.values = addValueClasses(of.values, f.values);
       }
@@ -49,6 +58,7 @@ export function mergeReports(reports: CoverageReport[]): CoverageReport {
         const ov = oe.values[vn];
         if (!ov) continue;
         ov.hits += v.hits;
+        union(ov, v);
         ov.observed = (ov.observed ?? 0) + (v.observed ?? 0);
       }
     }

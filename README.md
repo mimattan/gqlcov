@@ -72,6 +72,30 @@ gqlcov: 5 operations (3 queries, 2 mutations, 0 subscriptions), schema 9c5b5e1ae
   Enum values                         42.86%  (3/7)
 ```
 
+## Which test covers what
+
+Give each capture a `source` label (the test name) and every field, argument, input field and enum value in the report lists the tests that hit it:
+
+```ts
+captureGraphQL(page, { source: testInfo.titlePath.join(" > ") });                    // Playwright
+useGqlcovCapture({ source: (ctx) => ctx.request.headers.get("x-test-name") });       // Yoga / Envelop, header set by the test
+```
+
+```sh
+gqlcov tests .gqlcov/report.json                       # per test: operations, fields, args, inputs, enum values, and what only it covers
+gqlcov tests .gqlcov/report.json --test "create match" # everything one test touches
+```
+
+```
+  Test                    Ops  Fields   Args  Inputs  Enums   Only
+  create match              1       6      1       5      1      8
+  list all                  1       3      0       0      0      0
+
+  1 of 5 tests cover nothing the others do not ("Only" is 0).
+```
+
+In the HTML report each row shows its covering tests, typing a test name in the filter shows everything that test touches, and a Tests section lists what only each test covers. In the JSON, elements carry `tests` and `report.tests` counts operations per test.
+
 ## Persisted queries
 
 Clients on Apollo persisted query lists, automatic persisted queries, Relay persisted documents or Cosmo persisted operations send an id instead of the document. The server plugins are unaffected; the Playwright capture records the id and resolves it in one of three ways:
@@ -172,6 +196,7 @@ When `--schema` is an endpoint or introspection JSON there is no SDL file for th
 gqlcov report  -s <schema> [-c <dir>...] [-o report.json] [--html out.html] [--lcov lcov.info] [--istanbul coverage-final.json] [--exclude <pattern>...] [--subgraph name=file...] [--usage usage.json] [--persisted manifest.json...] [--include-deprecated] [--untested] [--sha] [--branch]
 gqlcov usage   apollo <graph@variant> [--since ts] [--metric requests|executions] [-o usage.json]
 gqlcov usage   cosmo <[namespace/]graph> [--range hours | --from iso --to iso] [-o usage.json]
+gqlcov tests   <report> [--test name] [--json]     # coverage per test
 gqlcov merge   <report>... -o merged.json          # parallel shards
 gqlcov diff    <base> <head> [--json]
 gqlcov gate    <report> [--min-fields n] [--min-input-fields n] [--min-enum-values n] [--base report.json] [--tolerance points] [--subgraph name...|'*'] [--min-used-fields n]
@@ -235,10 +260,8 @@ CI runs the coverage check; the HTML report lands in `coverage/`.
 ## Roadmap
 
 - Per-field join with resolver code coverage (Apollo Server, TypeScript): wrap resolvers to record which resolver ran for which schema field, then show both numbers per field.
-- Test attribution: join the capture `source` label with per-test code coverage to answer "which test owns this field".
 - Pairwise input-field state reporting (non-gating).
 - Cypress helper and a standalone reverse proxy for servers outside your control (a router in front of the subgraphs, for instance).
-- Map uncovered fields back to the test that should own them, using the `source` label.
 - GitHub Action with PR annotations.
 
 ## Releasing

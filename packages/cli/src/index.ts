@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { computeCoverage, diffReports, gate, mergeReports, parsePersistedManifest, parseUsage, readCaptures, uncovered, toIstanbul, toLcov, DEFAULT_CAPTURE_DIR, type CoverageReport } from "@gqlcov/core";
+import { computeCoverage, diffReports, gate, mergeReports, parsePersistedManifest, parseUsage, readCaptures, testCoverage, uncovered, toIstanbul, toLcov, DEFAULT_CAPTURE_DIR, type CoverageReport } from "@gqlcov/core";
 import { renderHtml } from "./html.js";
 import { fmtRequests } from "./format.js";
 import { isRemotePointer as isRemote, loadSchema } from "./schema-source.js";
@@ -157,6 +157,35 @@ export function buildCli(): Command {
       const data = await fetchCosmoUsage(ref, { range: o.range, from: o.from, to: o.to });
       writeOut(o.out, JSON.stringify(data, null, 2));
       console.log(`gqlcov: ${Object.keys(data.fields).length} fields from ${data.source}, ${data.from?.slice(0, 10)} to ${data.to?.slice(0, 10)}: ${o.out}`);
+    });
+
+  program
+    .command("tests")
+    .description("Coverage per test, from the source label each capture carries")
+    .argument("<report>", "report JSON")
+    .option("--test <name>", "list everything one test covers")
+    .option("--json", "print as JSON")
+    .action((reportPath: string, o) => {
+      const list = testCoverage(readReport(reportPath));
+      const one = o.test === undefined ? undefined : list.find((t) => t.name === o.test);
+      if (o.test !== undefined && !one) throw new Error(`no test named "${o.test}" in the report${list.length ? ` (tests: ${list.map((t) => t.name).join(", ")})` : ""}`);
+      if (o.json) return console.log(JSON.stringify(one ?? list, null, 2));
+      if (one) {
+        console.log(`${one.name}: ${one.operations} operations`);
+        const show = (title: string, items: string[]) => console.log(`\n  ${title} (${items.length})${items.length ? `:\n    ${items.join("\n    ")}` : ""}`);
+        show("covered by this test only", one.unique);
+        show("fields", one.fields);
+        show("arguments", one.arguments);
+        show("input fields", one.inputFields);
+        show("enum values", one.enumValues);
+        return;
+      }
+      if (!list.length) return console.log("gqlcov: the report has no test names. Give captures a source label (the capture plugins' source option).");
+      const w = Math.max(4, ...list.map((t) => t.name.length));
+      console.log(`  ${"Test".padEnd(w)}  ${"Ops".padStart(5)}  ${"Fields".padStart(6)}  ${"Args".padStart(5)}  ${"Inputs".padStart(6)}  ${"Enums".padStart(5)}  ${"Only".padStart(5)}`);
+      for (const t of list) console.log(`  ${t.name.padEnd(w)}  ${String(t.operations).padStart(5)}  ${String(t.fields.length).padStart(6)}  ${String(t.arguments.length).padStart(5)}  ${String(t.inputFields.length).padStart(6)}  ${String(t.enumValues.length).padStart(5)}  ${String(t.unique.length).padStart(5)}`);
+      const redundant = list.filter((t) => t.unique.length === 0);
+      if (redundant.length) console.log(`\n  ${redundant.length} of ${list.length} tests cover nothing the others do not ("Only" is 0).`);
     });
 
   program
