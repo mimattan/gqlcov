@@ -287,7 +287,7 @@ steps:
     if: github.event_name == 'pull_request'
     with: { path: .gqlcov/base.json, key: gqlcov-main-${{ github.sha }}, restore-keys: gqlcov-main- }
 
-  - uses: mimattan/gqlcov@v0.3.2         # the release that ships the Action
+  - uses: mimattan/gqlcov@v0.4.0         # the release that ships the Action
     with: { report: .gqlcov/report.json, base: .gqlcov/base.json }
 
   - run: npx gqlcov gate .gqlcov/report.json --min-fields 60 --base .gqlcov/base.json
