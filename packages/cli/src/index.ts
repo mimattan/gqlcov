@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { computeCoverage, diffReports, gate, mergeReports, parsePersistedManifest, parseUsage, readCaptures, uncovered, toIstanbul, toLcov, DEFAULT_CAPTURE_DIR, type CoverageReport } from "@gqlcov/core";
 import { renderHtml } from "./html.js";
+import { fmtRequests } from "./format.js";
 import { isRemotePointer as isRemote, loadSchema } from "./schema-source.js";
 import { fetchApolloUsage, fetchCosmoUsage } from "./registry.js";
 
@@ -29,7 +30,6 @@ function printSummary(r: CoverageReport): void {
   printSubgraphs(r);
 }
 
-const fmtRequests = (n: number) => (n >= 1e6 ? `${Math.round(n / 1e5) / 10}M` : n >= 1e4 ? `${Math.round(n / 1e3)}k` : String(n));
 
 function printUsage(r: CoverageReport): void {
   const u = r.usage;

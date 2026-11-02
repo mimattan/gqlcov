@@ -48,8 +48,3 @@ export async function loadSchema(pointer: string, headers: Record<string, string
   const isSdlFile = !text.trim().startsWith("{");
   return { schema, sdl: isSdlFile ? text : printSchema(lexicographicSortSchema(schema)), isSdlFile, label: pointer };
 }
-
-/** @deprecated use loadSchema */
-export async function loadSchemaFrom(pointer: string, headers: Record<string, string> = {}): Promise<GraphQLSchema> {
-  return (await loadSchema(pointer, headers)).schema;
-}
