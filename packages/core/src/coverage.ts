@@ -26,6 +26,7 @@ import { Excluder } from "./exclude.js";
 import { schemaHash, toSchema } from "./schema.js";
 import { attributeSubgraphs, subgraphsFromSdls, subgraphsFromSupergraph } from "./subgraphs.js";
 import { applyUsage } from "./usage.js";
+import { resolvePersisted, type PersistedManifest } from "./persisted.js";
 import type {
   CapturedOperation,
   CoverageOptions,
@@ -259,6 +260,10 @@ export interface RecordResult {
 
 /** Record one captured operation into an existing report. */
 export function recordOperation(report: CoverageReport, schema: GraphQLSchema, op: CapturedOperation): RecordResult {
+  if (!op.document) {
+    report.operations.unresolved = (report.operations.unresolved ?? 0) + 1;
+    return { valid: false, errors: [op.persistedId ? `persisted document ${op.persistedId} not resolved: give its manifest` : "capture has no document"] };
+  }
   let doc;
   try {
     doc = parse(op.document);
@@ -344,6 +349,8 @@ export interface ComputeOptions extends CoverageOptions {
   subgraphSdls?: Record<string, string>;
   /** Production field usage to join with the result. */
   usage?: UsageData;
+  /** Persisted-operation manifests, to resolve captures that only carry a persisted id. */
+  persisted?: PersistedManifest[];
 }
 
 /** Compute a full report from a schema and a list of captured operations. */
@@ -353,10 +360,10 @@ export function computeCoverage(
   options: ComputeOptions = {},
 ): CoverageReport {
   const schema = toSchema(schemaInput);
-  const { run, subgraphSdls, usage, ...covOptions } = options;
+  const { run, subgraphSdls, usage, persisted, ...covOptions } = options;
   const report = emptyReport(schema, covOptions);
   if (run) report.run = run;
-  for (const op of operations) recordOperation(report, schema, op);
+  for (const op of resolvePersisted([...operations], persisted)) recordOperation(report, schema, op);
   report.summary = summarise(report);
   const membership = subgraphSdls && Object.keys(subgraphSdls).length ? subgraphsFromSdls(subgraphSdls) : subgraphsFromSupergraph(schema);
   if (membership) attributeSubgraphs(report, membership);

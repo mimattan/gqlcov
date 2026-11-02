@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { computeCoverage, diffReports, gate, mergeReports, parseUsage, readCaptures, uncovered, toIstanbul, toLcov, DEFAULT_CAPTURE_DIR, type CoverageReport } from "@gqlcov/core";
+import { computeCoverage, diffReports, gate, mergeReports, parsePersistedManifest, parseUsage, readCaptures, uncovered, toIstanbul, toLcov, DEFAULT_CAPTURE_DIR, type CoverageReport } from "@gqlcov/core";
 import { lexicographicSortSchema, printSchema } from "graphql";
 import { renderHtml } from "./html.js";
 import { loadSchemaFrom } from "./schema-source.js";
@@ -16,7 +16,7 @@ const writeOut = (p: string, content: string) => {
 function printSummary(r: CoverageReport): void {
   const s = r.summary;
   const line = (label: string, x: { percent: number; covered: number; total: number }) => `  ${label.padEnd(38)} ${String(x.percent).padStart(6)}%  (${x.covered}/${x.total})`;
-  console.log(`gqlcov: ${r.operations.total} operations (${r.operations.query} queries, ${r.operations.mutation} mutations, ${r.operations.subscription} subscriptions${r.operations.invalid ? `, ${r.operations.invalid} invalid` : ""}), schema ${r.schemaHash}`);
+  console.log(`gqlcov: ${r.operations.total} operations (${r.operations.query} queries, ${r.operations.mutation} mutations, ${r.operations.subscription} subscriptions${r.operations.invalid ? `, ${r.operations.invalid} invalid` : ""}${r.operations.unresolved ? `, ${r.operations.unresolved} unresolved persisted ids` : ""}), schema ${r.schemaHash}`);
   console.log(line("Types", s.types));
   console.log(line("Output fields", s.fields));
   console.log(line("Arguments", s.arguments));
@@ -88,6 +88,7 @@ export function buildCli(): Command {
     .option("--exclude <pattern...>", "exclude patterns: Type, Type.field, Type.field(arg), Input.field; * wildcard")
     .option("--subgraph <name=file...>", "attribute elements to subgraphs from one SDL per subgraph (a composed supergraph needs no option: its @join__ directives are read)")
     .option("--usage <file>", "production field usage JSON (from gqlcov usage apollo|cosmo) to list used-but-untested fields")
+    .option("--persisted <file...>", "persisted-operation manifest(s) (Apollo manifest, Relay map, or [{id, body}]) to resolve captures that only carry an id")
     .option("--include-deprecated", "count deprecated elements in totals")
     .option("--sha <sha>", "commit SHA for the run", process.env.GITHUB_SHA)
     .option("--branch <name>", "branch for the run", process.env.GITHUB_REF_NAME)
@@ -102,6 +103,7 @@ export function buildCli(): Command {
         run: { sha: o.sha, branch: o.branch, finishedAt: new Date().toISOString() },
         subgraphSdls: readSubgraphSdls(o.subgraph),
         usage: o.usage ? parseUsage(readFileSync(o.usage, "utf8")) : undefined,
+        persisted: (o.persisted as string[] | undefined)?.map((f) => parsePersistedManifest(readFileSync(f, "utf8"))),
       });
       writeOut(o.out, JSON.stringify(report, null, 2));
       if (o.html) writeOut(o.html, renderHtml(report, schema));
@@ -123,6 +125,7 @@ export function buildCli(): Command {
         printSummary(report);
         printUsage(report);
         if (ops.length === 0) console.log(`  (no captures found in ${o.captures.join(", ")})`);
+        if (report.operations.unresolved) console.log(`  ${report.operations.unresolved} captures carried only a persisted id: pass the manifest with --persisted, or the capture layer's manifest option`);
         console.log(`  report: ${o.out}${o.html ? `, html: ${o.html}` : ""}${o.lcov ? `, lcov: ${o.lcov}` : ""}${o.istanbul ? `, istanbul: ${o.istanbul}` : ""}`);
         if (o.untested) {
           const u = uncovered(report);

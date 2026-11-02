@@ -1,7 +1,9 @@
 /** One operation as executed by the server (or seen on the wire) during a test run. */
 export interface CapturedOperation {
-  /** The GraphQL document, printed. */
-  document: string;
+  /** The GraphQL document, printed. Absent when the client sent only a persisted id that the capture layer could not resolve. */
+  document?: string;
+  /** Persisted document id as sent by the client (APQ sha256Hash, a persisted query list id, Relay doc_id, documentId). */
+  persistedId?: string;
   operationName?: string | null;
   variables?: Record<string, unknown> | null;
   /** ISO timestamp of execution. */
@@ -136,6 +138,8 @@ export interface OperationStats {
   named: Record<string, number>;
   /** Documents that failed to parse or validate against the schema. */
   invalid: number;
+  /** Captures that carried only a persisted id no manifest or other capture could resolve. Absent in older reports. */
+  unresolved?: number;
 }
 
 export interface CoverageReport {

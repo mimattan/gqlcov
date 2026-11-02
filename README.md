@@ -72,6 +72,16 @@ gqlcov: 5 operations (3 queries, 2 mutations, 0 subscriptions), schema 9c5b5e1ae
   Enum values                         42.86%  (3/7)
 ```
 
+## Persisted queries
+
+Clients on Apollo persisted query lists, automatic persisted queries, Relay persisted documents or Cosmo persisted operations send an id instead of the document. The server plugins are unaffected; the Playwright capture records the id and resolves it in one of three ways:
+
+- At capture time, from a manifest: `captureGraphQL(page, { manifest: "persisted-query-manifest.json" })`. Apollo's manifest, Relay's `{ id: text }` output and any `[{ id, body }]` array are accepted.
+- Automatically for APQ: a cache miss sends both hash and document, and the hash is reused for later hash-only requests in the same run, as well as across captures at report time.
+- At report time: `gqlcov report --persisted persisted-query-manifest.json`.
+
+Captures that stay unresolved are counted as `unresolved` and listed in the console, never silently dropped.
+
 ## Federation: coverage per subgraph
 
 Give gqlcov the composed supergraph and every number is also reported per subgraph, so the team that owns `players` sees and gates only its own surface:
@@ -125,10 +135,10 @@ When `--schema` is an endpoint or introspection JSON there is no SDL file for th
 ## CLI
 
 ```
-gqlcov report  -s <schema> [-c <dir>...] [-o report.json] [--html out.html] [--lcov lcov.info] [--istanbul coverage-final.json] [--exclude <pattern>...] [--subgraph name=file...] [--include-deprecated] [--untested] [--sha] [--branch]
+gqlcov report  -s <schema> [-c <dir>...] [-o report.json] [--html out.html] [--lcov lcov.info] [--istanbul coverage-final.json] [--exclude <pattern>...] [--subgraph name=file...] [--usage usage.json] [--persisted manifest.json...] [--include-deprecated] [--untested] [--sha] [--branch]
 gqlcov merge   <report>... -o merged.json          # parallel shards
 gqlcov diff    <base> <head> [--json]
-gqlcov gate    <report> [--min-fields n] [--min-input-fields n] [--min-enum-values n] [--base report.json] [--tolerance points] [--subgraph name...|'*']
+gqlcov gate    <report> [--min-fields n] [--min-input-fields n] [--min-enum-values n] [--base report.json] [--tolerance points] [--subgraph name...|'*'] [--min-used-fields n]
 ```
 
 Exclude patterns match `Type`, `Type.field`, `Type.field(arg)`, `Input.field` or `Enum.VALUE`, with `*` as a wildcard inside one segment: `--exclude "Query.__*" "Mutation.internal*" "LegacyInput.*"`. Deprecated elements and introspection types are excluded by default.

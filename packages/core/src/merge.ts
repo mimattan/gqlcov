@@ -17,6 +17,7 @@ export function mergeReports(reports: CoverageReport[]): CoverageReport {
     out.operations.mutation += r.operations.mutation;
     out.operations.subscription += r.operations.subscription;
     out.operations.invalid += r.operations.invalid;
+    if (r.operations.unresolved) out.operations.unresolved = (out.operations.unresolved ?? 0) + r.operations.unresolved;
     for (const [k, v] of Object.entries(r.operations.named)) out.operations.named[k] = (out.operations.named[k] ?? 0) + v;
     for (const [tn, t] of Object.entries(r.types)) {
       const ot = out.types[tn];
