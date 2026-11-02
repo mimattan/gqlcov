@@ -18,9 +18,14 @@ interface Row { name: string; covered: number; total: number; body: string; kind
 const gAttr = (graphs?: string[]) => (graphs ? ` data-g="${esc(graphs.join(" "))}"` : "");
 /** Test names on a list item: searchable through data-t, readable in a short label with the full list on hover. */
 const tAttr = (tests?: string[]) => (tests ? ` data-t="${esc(tests.join("\n").toLowerCase())}"` : "");
-/** A requested field that never came back with a value: the test asks for it but never sees data. */
+/**
+ * A requested field whose response had an error, or failing that, one that never came back with a value:
+ * the test asks for it but never sees data.
+ */
 const noValueBadge = (f: FieldCoverage) =>
-  f.hits > 0 && f.returned && f.returned.value === 0
+  f.hits > 0 && f.returned?.error
+    ? `<span class="err-badge" title="operations whose response had an error at this field">error in ${f.returned.error}</span>`
+    : f.hits > 0 && f.returned && f.returned.value === 0 && (f.returned.null || f.returned.empty)
     ? `<span class="noval" title="requested, but every response had it as ${f.returned.null && f.returned.empty ? "null or an empty list" : f.returned.null ? "null" : "an empty list"}">${f.returned.null && f.returned.empty ? "null or empty" : f.returned.null ? "always null" : "always empty"}</span>`
     : "";
 
@@ -237,6 +242,7 @@ body.only-gaps .row.full:not(.aux),body.only-gaps li.on{display:none}
 .empty{color:var(--ink2);font-size:14px;padding:12px 0}
 .prod{display:inline-block;margin-right:10px;padding:1px 7px;border-radius:10px;background:var(--track);color:var(--ink2);font-size:11.5px}.prod.risk{background:var(--low);color:#fff}
 .usage,.invalid{margin-bottom:28px}.invalid .fname small{display:block;font-family:inherit}.invalid .src{color:var(--ink2)}.invalid .err{color:var(--low);white-space:normal}.risk-box{padding:0}.risk-head{padding:10px 14px;font-weight:550}.risk-box .fields{border-top:1px solid var(--line)}
+.err-badge{display:inline-block;margin-right:10px;padding:1px 7px;border-radius:10px;background:var(--low);color:#fff;font-size:11.5px}
 .noval{display:inline-block;margin-right:10px;padding:1px 7px;border-radius:10px;background:var(--half-bg);color:var(--mid);font-size:11.5px}
 .by{display:inline-block;margin-right:10px;color:var(--accent);font-size:11.5px;max-width:220px;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom}
 .tests .row.redundant .rname{color:var(--ink2)}

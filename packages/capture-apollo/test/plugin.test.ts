@@ -44,7 +44,8 @@ describe("gqlcovCapturePlugin", () => {
     const ops = readCaptures(dir);
     expect(ops).toHaveLength(1);
     expect(ops[0]).toMatchObject({ operationName: null, variables: null });
-    expect(ops[0].responseEnums).toBeUndefined();
+    expect(ops[0].responseValues).toEqual({ "Query.boom": ["error"] }); // data is null, but the error says which field failed
+    expect(ops[0].responseEnums).toEqual({});
   });
 
   it("is off when disabled, and follows a function, GQLCOV_CAPTURE and NODE_ENV", async () => {

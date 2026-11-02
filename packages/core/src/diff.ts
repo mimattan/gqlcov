@@ -142,14 +142,16 @@ function pathInSubgraphs(report: CoverageReport, path: string, subgraphs: string
 
 /**
  * Uncovered elements, grouped, for the "what to test next" list. With response data it also lists requested fields
- * that never came back with a value, and possible types of interfaces and unions that never came back ("Node.Club").
+ * that never came back with a value, fields whose response had an error, and possible types of interfaces and
+ * unions that never came back ("Node.Club").
  */
-export function uncovered(report: CoverageReport): { fields: string[]; arguments: string[]; inputFields: string[]; enumValues: string[]; neverReturned: string[]; possibleTypes: string[] } {
-  const out = { fields: [] as string[], arguments: [] as string[], inputFields: [] as string[], enumValues: [] as string[], neverReturned: [] as string[], possibleTypes: [] as string[] };
+export function uncovered(report: CoverageReport): { fields: string[]; arguments: string[]; inputFields: string[]; enumValues: string[]; neverReturned: string[]; errored: string[]; possibleTypes: string[] } {
+  const out = { fields: [] as string[], arguments: [] as string[], inputFields: [] as string[], enumValues: [] as string[], neverReturned: [] as string[], errored: [] as string[], possibleTypes: [] as string[] };
   for (const [tn, t] of Object.entries(report.types))
     for (const [fn, f] of Object.entries(t.fields)) {
       if (f.hits === 0) out.fields.push(`${tn}.${fn}`);
       else if (f.returned && f.returned.value === 0) out.neverReturned.push(`${tn}.${fn}`);
+      if (f.returned?.error) out.errored.push(`${tn}.${fn}`);
       for (const [an, a] of Object.entries(f.args)) if (a.hits === 0) out.arguments.push(`${tn}.${fn}(${an})`);
     }
   for (const [tn, t] of Object.entries(report.inputTypes)) for (const [fn, f] of Object.entries(t.fields)) if (f.sent === 0) out.inputFields.push(`${tn}.${fn}`);

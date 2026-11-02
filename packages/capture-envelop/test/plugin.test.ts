@@ -71,7 +71,8 @@ describe("useGqlcovCapture", () => {
     await run({ dir, enabled: true }, `{ boom }`);
     const [op] = readCaptures(dir);
     expect(op).toMatchObject({ operationName: null, variables: null });
-    expect(op.responseEnums).toBeUndefined();
+    expect(op.responseValues).toEqual({ "Query.boom": ["error"] }); // data is null, but the error says which field failed
+    expect(op.responseEnums).toEqual({});
     expect(op.source).toBeUndefined();
   });
 

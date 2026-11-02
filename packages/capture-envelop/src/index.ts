@@ -57,9 +57,10 @@ export function useGqlcovCapture(options: CaptureOptions = {}): Plugin {
         onExecuteDone({ result }) {
           try {
             // Streamed (incremental) results are captured without response facts.
-            const data = "data" in result ? result.data : undefined;
-            if (data) {
-              const facts = collectResponse(args.schema as GraphQLSchema, args.document as DocumentNode, data, args.operationName);
+            const single = "data" in result || "errors" in result ? result : undefined;
+            // A response whose data is null still says which fields failed, through its errors.
+            if (single && (single.data || single.errors?.length)) {
+              const facts = collectResponse(args.schema as GraphQLSchema, args.document as DocumentNode, single.data, args.operationName, single.errors);
               Object.assign(op, { responseEnums: facts.enums, responseValues: facts.values, responseTypes: facts.types });
             }
           } catch {

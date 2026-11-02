@@ -41,6 +41,7 @@ export function mergeReports(reports: CoverageReport[]): CoverageReport {
         if (f.returned) {
           const ret = (of.returned ??= { value: 0, null: 0, empty: 0 });
           for (const k of ["value", "null", "empty"] as const) ret[k] += f.returned[k];
+          if (f.returned.error) ret.error = (ret.error ?? 0) + f.returned.error;
         }
         for (const [an, a] of Object.entries(f.args)) {
           const oa = of.args[an];

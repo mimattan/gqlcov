@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Page, Request } from "@playwright/test";
 import { readCaptures } from "@gqlcov/core";
-import { captureGraphQL, operationFromFrame, operationsFromRequest, persistedIdOf } from "../src/index.js";
+import { captureGraphQL, operationFromFrame, operationsFromRequest, persistedIdOf, shapesFromResponse } from "../src/index.js";
 
 const post = (body: unknown): Request => ({ method: () => "POST", url: () => "http://x/graphql", postData: () => JSON.stringify(body) }) as unknown as Request;
 const get = (params: Record<string, string>): Request => ({ method: () => "GET", url: () => `http://x/graphql?${new URLSearchParams(params)}`, postData: () => null }) as unknown as Request;
@@ -54,7 +54,7 @@ describe("captureGraphQL", () => {
     writeFileSync(apollo, JSON.stringify({ format: "apollo-persisted-query-manifest", version: 1, operations: [{ id: "a1", body: "{ a }" }] }));
     writeFileSync(relay, JSON.stringify({ r1: "{ r }" }));
     const { target, send } = fakeTarget();
-    await captureGraphQL(target, { dir, source: "my test", manifest: [apollo, relay] });
+    await captureGraphQL(target, { dir, source: "my test", manifest: [apollo, relay], responses: false });
     send(at("http://app/graphql", { query: "{ x }" }));
     send(at("http://app/graphql", { extensions: { persistedQuery: { sha256Hash: "a1" } } }));
     send(at("http://app/graphql", { doc_id: "r1" }));
@@ -72,7 +72,7 @@ describe("captureGraphQL", () => {
     process.env.GQLCOV_CAPTURE_DIR = join(root, "env");
     try {
       const { target, send } = fakeTarget();
-      await captureGraphQL(target, { endpoint: /\/api\/gql$/, manifest });
+      await captureGraphQL(target, { endpoint: /\/api\/gql$/, manifest, responses: false });
       send(at("http://app/api/gql", { documentId: "m" }));
       send(at("http://app/graphql", { query: "{ no }" }));
       expect(readCaptures(join(root, "env")).map((o) => o.document)).toEqual(["{ m }"]);
@@ -87,13 +87,13 @@ describe("captureGraphQL", () => {
     const blocker = join(root, "file");
     writeFileSync(blocker, "x");
     const { target, send } = fakeTarget();
-    await captureGraphQL(target, { dir: join(blocker, "captures") });
+    await captureGraphQL(target, { dir: join(blocker, "captures"), responses: false });
     expect(() => send(at("http://app/graphql", { query: "{ x }" }))).not.toThrow();
     const cwd = process.cwd();
     process.chdir(root);
     try {
       const d = fakeTarget();
-      await captureGraphQL(d.target);
+      await captureGraphQL(d.target, { responses: false });
       d.send(at("http://app/graphql", { query: "{ y }" }));
       expect(readCaptures(join(root, ".gqlcov/captures")).map((o) => o.document)).toEqual(["{ y }"]);
     } finally {
@@ -163,5 +163,49 @@ describe("captureGraphQL over WebSocket", () => {
       ws.emit("framesent", subscribe(q));
     }
     expect(readCaptures(dir).map((o) => o.document).sort()).toEqual(["subscription { early }", "subscription { late }"]);
+  });
+});
+
+describe("shapesFromResponse", () => {
+  it("gives one shape per result, in request order, and none for bodies that are not results", () => {
+    expect(shapesFromResponse({ data: { club: { logo: null, courts: [] } } })).toEqual([{ club: 1, "club.logo": 2, "club.courts": 8 }]);
+    expect(shapesFromResponse([{ data: { a: 1 } }, { errors: [{ message: "x", path: ["b"] }], data: { b: null } }, "junk"])).toEqual([{ a: 1 }, { b: 4 }, undefined]);
+    expect(shapesFromResponse({ errors: "not a list", data: null })).toEqual([{}]);
+    expect(shapesFromResponse(null)).toEqual([undefined]);
+    expect(shapesFromResponse({ message: "not GraphQL" })).toEqual([undefined]);
+  });
+});
+
+describe("captureGraphQL with responses", () => {
+  type Listener = (r: Request) => unknown;
+  const target = () => {
+    const on: Record<string, Listener> = {};
+    return { page: { on: (event: string, cb: Listener) => { on[event] = cb; } } as unknown as Page, on };
+  };
+  const finished = (url: string, body: unknown, response: unknown) =>
+    ({ method: () => "POST", url: () => url, postData: () => JSON.stringify(body), response: async () => (response === undefined ? null : { json: async () => { if (response instanceof Error) throw response; return response; } }) }) as unknown as Request;
+
+  it("records each operation when its request finishes, with what the response held", async () => {
+    const dir = join(mkdtempSync(join(tmpdir(), "gqlcov-pw-")), "captures");
+    const { page, on } = target();
+    await captureGraphQL(page, { dir, source: "t" });
+    expect(on.request).toBeUndefined();
+    await on.requestfinished(finished("http://app/graphql", { query: "{ club { logo } }" }, { data: { club: { logo: null } } }));
+    await on.requestfinished(finished("http://app/graphql", [{ query: "{ a }" }, { query: "{ b }" }], [{ data: { a: 1 } }]));
+    await on.requestfinished(finished("http://app/graphql", { query: "{ gone }" }, new Error("Target closed")));
+    await on.requestfinished(finished("http://app/graphql", { query: "{ none }" }, undefined));
+    await on.requestfinished(finished("http://app/rest", { query: "{ ignored }" }, { data: {} }));
+    await on.requestfinished(finished("http://app/graphql", { variables: {} }, { data: {} }));
+    on.requestfailed(finished("http://app/graphql", { query: "{ failed }" }, undefined));
+    on.requestfailed(finished("http://app/rest", { query: "{ ignored }" }, undefined));
+    const ops = readCaptures(dir).map((o) => [o.document, o.responseShape ?? null, o.source]);
+    expect(ops.sort((a, b) => String(a[0]).localeCompare(String(b[0])))).toEqual([
+      ["{ a }", { a: 1 }, "t"],
+      ["{ b }", null, "t"],
+      ["{ club { logo } }", { club: 1, "club.logo": 2 }, "t"],
+      ["{ failed }", null, "t"],
+      ["{ gone }", null, "t"],
+      ["{ none }", null, "t"],
+    ]);
   });
 });

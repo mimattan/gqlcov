@@ -40,9 +40,10 @@ export function gqlcovCapturePlugin<TContext extends Record<string, unknown> = R
           try {
             // For incremental (deferred) responses only the initial payload is walked.
             const body = ctx.response.body;
-            const data = body.kind === "single" ? body.singleResult.data : body.initialResult.data;
-            if (data) {
-              const facts = collectResponse(ctx.schema, ctx.document, data, ctx.operationName);
+            const result = body.kind === "single" ? body.singleResult : body.initialResult;
+            // A response whose data is null still says which fields failed, through its errors.
+            if (result.data || result.errors?.length) {
+              const facts = collectResponse(ctx.schema, ctx.document, result.data, ctx.operationName, result.errors);
               Object.assign(op, { responseEnums: facts.enums, responseValues: facts.values, responseTypes: facts.types });
             }
           } catch {

@@ -12,14 +12,28 @@ export interface CapturedOperation {
   source?: string;
   /** Enum values that appeared in the response data, by enum name. Server-side capture fills this; wire capture does not. */
   responseEnums?: Record<string, string[]>;
-  /** Per selected field ("ParentType.field"), what came back: a value, null, or an empty list. Server-side capture fills this. */
+  /** Per selected field ("ParentType.field"), what came back: a value, null, an empty list, or an error. Server-side capture fills this. */
   responseValues?: Record<string, ResponseOutcome[]>;
+  /**
+   * What each response path held, for wire capture without a schema (Playwright): bits 1 value, 2 null, 4 error,
+   * 8 empty list, keyed by response keys joined with dots, list indexes dropped. See `collectResponseShape`.
+   */
+  responseShape?: Record<string, number>;
   /** Per interface or union, the concrete types returned (from `__typename`, where selected). Server-side capture fills this. */
   responseTypes?: Record<string, string[]>;
 }
 
+/** Operations whose response had a field as a value, null, an empty list, or an error (a null the response's `errors` point at). */
+export interface ReturnedCounts {
+  value: number;
+  null: number;
+  empty: number;
+  /** Absent in older reports. */
+  error?: number;
+}
+
 /** What a selected field came back as in one response. */
-export type ResponseOutcome = "value" | "null" | "empty";
+export type ResponseOutcome = "value" | "null" | "empty" | "error";
 
 export interface RunInfo {
   id?: string;
@@ -55,7 +69,7 @@ export interface FieldCoverage {
   /** Tests (capture `source` labels) that requested this field, sorted. */
   tests?: string[];
   /** Operations whose response had this field as a value, as null, or as an empty list. Absent without response data. */
-  returned?: Record<ResponseOutcome, number>;
+  returned?: ReturnedCounts;
 }
 
 /** An interface or union, and how often each of its possible types came back. */

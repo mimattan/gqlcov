@@ -77,12 +77,14 @@ gqlcov: 5 operations (3 queries, 2 mutations, 0 subscriptions), schema 9c5b5e1ae
 
 ## Did the data come back?
 
-A field counts as covered once a test requests it, even if every response had it as `null`. The Yoga/Envelop and Apollo plugins also record what each response contained, so the report adds two informational numbers (never gated):
+A field counts as covered once a test requests it, even if every response had it as `null`. All three capture layers also record what each response contained, so the report adds two informational numbers (never gated):
 
 - **Fields that returned a value**: of the requested fields, how many came back non-null and non-empty at least once. A field that was always `null` or an empty list gets an "always null" or "always empty" badge in the HTML report and is listed by `--untested`: the test asks for it but never sees data, so a resolver that broke would go unnoticed.
 - **Possible types returned**: for each interface or union your tests got back, which of its implementations or members came back, read from `__typename` where the operation selected it (Apollo Client and most clients add it). The HTML report lists them per interface and union.
 
-Only names and outcomes are kept, never response data. The Playwright capture has no schema, so these numbers come from the server plugins only; both appear only when some capture carried response data.
+**Errors** count too: GraphQL answers HTTP 200 and puts failures in an `errors` array that tests rarely read. A null that an error points at, or one above it from null propagation, counts as an error rather than a null, and so does a field on an error's path that propagation removed from the data. Such fields get an "error in n" badge in the HTML report and are listed under "returned an error" by `--untested` and in the Markdown summary; in JSON, `returned.error` counts the operations.
+
+Only names and outcomes are kept, never response data. The Playwright capture has no schema, so it records only which response paths held a value, a null, an empty list or an error, and the report maps them to schema fields through the operation (under unions and interfaces, a key selected on several types credits each). It therefore writes captures when a request finishes, or fails (without response data); `captureGraphQL(page, { responses: false })` writes them as soon as requests are sent, as before. Both numbers appear only when some capture carried response data; possible types need `__typename` and come from the server plugins.
 
 ## Which test covers what
 

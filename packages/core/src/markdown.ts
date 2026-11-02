@@ -86,6 +86,7 @@ export function toMarkdown(head: CoverageReport, base?: CoverageReport): string 
         details("Untested input fields", u.inputFields.map(code)) +
         details("Untested enum values", u.enumValues.map(code)) +
         details("Requested, but never returned a value", u.neverReturned.map(code)) +
+        details("Returned an error", u.errored.map(code)) +
         details("Possible types never returned", u.possibleTypes.map(code)),
     );
   }

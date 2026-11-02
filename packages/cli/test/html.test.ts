@@ -55,6 +55,15 @@ describe("renderHtml", () => {
     expect(old).not.toContain("Nullable input fields sent as null");
   });
 
+  it("badges fields whose response had an error before ones that only came back empty", () => {
+    const page = renderHtml(computeCoverage(schema, [
+      { document: `{ courts { id status name } }`, responseShape: { courts: 1, "courts.id": 4, "courts.status": 8, "courts.name": 1 } },
+    ]), schema);
+    expect(page).toContain(`<span class="fname">id</span><span class="hits"><span class="err-badge" title="operations whose response had an error at this field">error in 1</span>`);
+    expect(page).toContain(`<span class="noval" title="requested, but every response had it as an empty list">always empty</span>`);
+    expect(page).not.toMatch(/<span class="fname">name<\/span><span class="hits"><span class="(?:err-badge|noval)"/);
+  });
+
   it("lists operations that do not validate, with their errors", () => {
     const section = between(html, `<section class="invalid">`, "</section>");
     expect(section).toContain(`<span class="fname">(anonymous)<small class="err">Cannot query field &quot;nope&quot; on type &quot;Query&quot;. Did you mean &quot;node&quot;?</small></span><span class="hits">1×</span>`);

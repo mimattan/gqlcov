@@ -142,7 +142,7 @@ export function buildCli(): Command {
         console.log(`  report: ${o.out}${o.html ? `, html: ${o.html}` : ""}${o.lcov ? `, lcov: ${o.lcov}` : ""}${o.istanbul ? `, istanbul: ${o.istanbul}` : ""}`);
         if (o.untested) {
           const u = uncovered(report);
-          const titles: Record<keyof typeof u, string> = { fields: "fields", arguments: "arguments", inputFields: "input fields", enumValues: "enum values", neverReturned: "requested, but never returned a value", possibleTypes: "possible types never returned" };
+          const titles: Record<keyof typeof u, string> = { fields: "fields", arguments: "arguments", inputFields: "input fields", enumValues: "enum values", neverReturned: "requested, but never returned a value", errored: "returned an error", possibleTypes: "possible types never returned" };
           for (const [k, v] of Object.entries(u)) if (v.length) console.log(`\n  ${titles[k as keyof typeof u]} (${v.length}):\n    ${v.join("\n    ")}`);
         }
       }

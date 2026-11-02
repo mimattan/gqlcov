@@ -28,6 +28,7 @@ import {
 import { Excluder } from "./exclude.js";
 import { schemaHash, toSchema } from "./schema.js";
 import { attributeSubgraphs, subgraphsFromSdls, subgraphsFromSupergraph } from "./subgraphs.js";
+import { shapeToValues } from "./outcomes.js";
 import { applyUsage } from "./usage.js";
 import { addInvalid } from "./invalid.js";
 import { resolvePersisted, type PersistedManifest } from "./persisted.js";
@@ -382,13 +383,19 @@ export function recordOperation(report: CoverageReport, schema: GraphQLSchema, o
     if (!ec) continue;
     for (const v of new Set(values)) if (ec.values[v]) ec.values[v].observed++;
   }
-  if (op.responseValues) report.operations.responses = (report.operations.responses ?? 0) + 1;
-  for (const [path, outcomes] of Object.entries(op.responseValues ?? {})) {
+  // Server capture records outcomes per field; wire capture records a schema-free shape, resolved here.
+  let values = op.responseValues;
+  if (!values && op.responseShape) {
+    const def = operations.find((d) => !wanted || d.name?.value === wanted);
+    if (def) values = shapeToValues(schema, doc, def, op.responseShape);
+  }
+  if (values) report.operations.responses = (report.operations.responses ?? 0) + 1;
+  for (const [path, outcomes] of Object.entries(values ?? {})) {
     const dot = path.indexOf(".");
     const fc = report.types[path.slice(0, dot)]?.fields[path.slice(dot + 1)];
     if (!fc) continue;
     const returned = (fc.returned ??= { value: 0, null: 0, empty: 0 });
-    for (const o of new Set(outcomes)) returned[o]++;
+    for (const o of new Set(outcomes)) returned[o] = (returned[o] ?? 0) + 1;
   }
   for (const [name, concrete] of Object.entries(op.responseTypes ?? {})) {
     const at = report.abstractTypes?.[name];

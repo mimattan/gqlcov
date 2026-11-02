@@ -209,6 +209,12 @@ describe("gqlcov report", () => {
     expect(gated.err).toContain("23 captured operations do not validate against the schema, above the maximum 0");
   });
 
+  it("lists fields that returned an error with --untested", async () => {
+    writeCapture(at("err-caps"), { document: `{ clubs { id name } }`, responseShape: { clubs: 1, "clubs.id": 1, "clubs.name": 4 } });
+    const r = await cli("report", "-s", at("schema.graphql"), "-c", at("err-caps"), "-o", at("err", "report.json"), "--untested");
+    expect(r.out).toContain("\n  returned an error (1):\n    Club.name");
+  });
+
   it("rejects a malformed --subgraph", async () => {
     await expect(cli("report", "-s", at("schema.graphql"), "-o", at("bad.json"), "--subgraph", "nofile")).rejects.toThrow('--subgraph expects name=path, got "nofile"');
   });

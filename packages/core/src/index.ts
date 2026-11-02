@@ -14,3 +14,5 @@ export { isFederationInternal } from "./federation.js";
 export { applyUsage, parseUsage, summariseUsage } from "./usage.js";
 export { parsePersistedManifest, mergePersistedManifests, resolvePersisted, type PersistedManifest } from "./persisted.js";
 export { toMarkdown, fmtRequests } from "./markdown.js";
+export { collectResponseShape, SHAPE_VALUE, SHAPE_NULL, SHAPE_ERROR, SHAPE_EMPTY } from "./shape.js";
+export { shapeToValues } from "./outcomes.js";

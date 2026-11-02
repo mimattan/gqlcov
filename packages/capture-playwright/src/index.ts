@@ -1,6 +1,6 @@
 import type { BrowserContext, Page, Request, WebSocket } from "@playwright/test";
 import { readFileSync } from "node:fs";
-import { DEFAULT_CAPTURE_DIR, mergePersistedManifests, parsePersistedManifest, writeCapture, type CapturedOperation, type PersistedManifest } from "@gqlcov/core";
+import { collectResponseShape, DEFAULT_CAPTURE_DIR, mergePersistedManifests, parsePersistedManifest, writeCapture, type CapturedOperation, type PersistedManifest } from "@gqlcov/core";
 
 export interface PlaywrightCaptureOptions {
   /** Match the GraphQL endpoint. String = substring of the URL; RegExp = test against the URL. Default "/graphql". */
@@ -14,6 +14,12 @@ export interface PlaywrightCaptureOptions {
    * manifest the id is still recorded, so `gqlcov report --persisted` can resolve it later.
    */
   manifest?: string | string[];
+  /**
+   * Read each response and record which fields held a value, a null, an empty list or an error. Default true.
+   * Captures are then written when the request finishes (or fails, without response data); set false to write
+   * them as soon as the request is sent, without response data.
+   */
+  responses?: boolean;
 }
 
 /** Ids seen together with their document in this process (APQ cache misses), reused for later id-only requests. */
@@ -69,6 +75,19 @@ export function operationsFromRequest(request: Request, manifest?: PersistedMani
 }
 
 /**
+ * The response shape of each operation in a response body, in request order: one entry for a single request,
+ * one per item for a batch. Bodies that are not GraphQL results give no shapes.
+ */
+export function shapesFromResponse(body: unknown): (Record<string, number> | undefined)[] {
+  const one = (r: unknown) => {
+    if (!r || typeof r !== "object" || !("data" in r || "errors" in r)) return undefined;
+    const x = r as { data?: unknown; errors?: { path?: (string | number)[] }[] };
+    return collectResponseShape(x.data, Array.isArray(x.errors) ? x.errors : undefined);
+  };
+  return Array.isArray(body) ? body.map(one) : [one(body)];
+}
+
+/**
  * The operation a client starts in one WebSocket frame, or undefined for any other frame. Understands
  * graphql-ws (`{ type: "subscribe", payload }`) and the older subscriptions-transport-ws (`{ type: "start", payload }`).
  */
@@ -102,10 +121,29 @@ export async function captureGraphQL(target: Page | BrowserContext, options: Pla
       // ignore
     }
   };
-  target.on("request", (request) => {
-    if (!matches(request.url())) return;
-    for (const op of operationsFromRequest(request, manifest)) save(op);
-  });
+  if (options.responses === false) {
+    target.on("request", (request) => {
+      if (!matches(request.url())) return;
+      for (const op of operationsFromRequest(request, manifest)) save(op);
+    });
+  } else {
+    target.on("requestfinished", async (request) => {
+      if (!matches(request.url())) return;
+      const ops = operationsFromRequest(request, manifest);
+      if (!ops.length) return;
+      let shapes: (Record<string, number> | undefined)[] = [];
+      try {
+        shapes = shapesFromResponse(await (await request.response())?.json());
+      } catch {
+        // no body, not JSON, or the page went away: keep the operations without response data
+      }
+      ops.forEach((op, i) => save(shapes[i] ? { ...op, responseShape: shapes[i] } : op));
+    });
+    target.on("requestfailed", (request) => {
+      if (!matches(request.url())) return;
+      for (const op of operationsFromRequest(request, manifest)) save(op);
+    });
+  }
   const watchSockets = (page: Page) =>
     page.on("websocket", (ws: WebSocket) => {
       if (!matches(ws.url())) return;
