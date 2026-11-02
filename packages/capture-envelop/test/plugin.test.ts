@@ -36,11 +36,11 @@ describe("useGqlcovCapture subscriptions", () => {
 
   it("captures a subscription once, when the client subscribes", async () => {
     const dir = fresh();
-    const events = await subscribeOnce({ dir, enabled: true, source: (ctx) => ctx.who as string }, `subscription Tick($n: Int) { tick(n: $n) }`, { n: 2 }, { who: "live test" });
+    const events = await subscribeOnce({ dir, enabled: true, source: (ctx) => ctx.who as string, identity: () => "guest" }, `subscription Tick($n: Int) { tick(n: $n) }`, { n: 2 }, { who: "live test" });
     expect(events).toHaveLength(2);
     const ops = readCaptures(dir);
     expect(ops).toHaveLength(1);
-    expect(ops[0]).toMatchObject({ operationName: null, variables: { n: 2 }, source: "live test" });
+    expect(ops[0]).toMatchObject({ operationName: null, variables: { n: 2 }, source: "live test", identity: "guest" });
     expect(ops[0].document).toContain("subscription Tick");
     expect(ops[0].responseEnums).toBeUndefined();
   });
@@ -58,9 +58,9 @@ describe("useGqlcovCapture subscriptions", () => {
 describe("useGqlcovCapture", () => {
   it("captures document, operation, variables, source and response enums", async () => {
     const dir = fresh();
-    await run({ dir, enabled: true, source: (ctx) => ctx.who as string }, `query Q($id: ID!) { court(id: $id) { status } }`, { id: "1" }, "Q", { who: "test a" });
+    await run({ dir, enabled: true, source: (ctx) => ctx.who as string, identity: (ctx) => ctx.role as string }, `query Q($id: ID!) { court(id: $id) { status } }`, { id: "1" }, "Q", { who: "test a", role: "admin" });
     const [op] = readCaptures(dir);
-    expect(op).toMatchObject({ operationName: "Q", variables: { id: "1" }, source: "test a", responseEnums: { Status: ["OPEN"] } });
+    expect(op).toMatchObject({ identity: "admin", operationName: "Q", variables: { id: "1" }, source: "test a", responseEnums: { Status: ["OPEN"] } });
     expect(op.responseValues).toEqual({ "Query.court": ["value"], "Court.status": ["value"] });
     expect(op.responseTypes).toEqual({});
     expect(op.document).toContain("court(id: $id)");
@@ -106,7 +106,7 @@ describe("useGqlcovCapture", () => {
 
   it("captures streamed results without enums and tolerates a response it cannot walk", () => {
     const dir = fresh();
-    const hooks = useGqlcovCapture({ dir, enabled: true, source: (ctx) => (Object.keys(ctx).length ? "had context" : "no context") }).onExecute!({ args: { document: parse(`{ court(id: "1") { status } }`), schema, operationName: undefined, variableValues: undefined, contextValue: undefined } } as never) as { onExecuteDone: (p: { result: unknown }) => void };
+    const hooks = useGqlcovCapture({ dir, enabled: true, source: (ctx) => (Object.keys(ctx).length ? "had context" : "no context"), identity: (ctx) => (Object.keys(ctx).length ? "had" : "nobody") }).onExecute!({ args: { document: parse(`{ court(id: "1") { status } }`), schema, operationName: undefined, variableValues: undefined, contextValue: undefined } } as never) as { onExecuteDone: (p: { result: unknown }) => void };
     hooks.onExecuteDone({ result: { [Symbol.asyncIterator]: () => ({}) } });
     const broken = useGqlcovCapture({ dir, enabled: true }).onExecute!({ args: { document: parse(`{ court(id: "1") { status } }`), schema: {}, contextValue: {} } } as never) as { onExecuteDone: (p: { result: unknown }) => void };
     broken.onExecuteDone({ result: { data: { court: { status: "OPEN" } } } });
@@ -114,6 +114,7 @@ describe("useGqlcovCapture", () => {
     expect(ops).toHaveLength(2);
     expect(ops.every((o) => o.responseEnums === undefined)).toBe(true);
     expect(ops.map((o) => o.source)).toContain("no context");
+    expect(ops.map((o) => o.identity)).toContain("nobody");
   });
 
   it("falls back to .gqlcov/captures in the working directory", async () => {

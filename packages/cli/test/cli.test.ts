@@ -215,6 +215,22 @@ describe("gqlcov report", () => {
     expect(r.out).toContain("\n  returned an error (1):\n    Club.name");
   });
 
+  it("prints coverage per identity and gates on identities per field", async () => {
+    const caps = at("id-caps");
+    writeCapture(caps, { document: `mutation { renameClub(id: "1", name: "x") { id } }`, identity: "admin" });
+    writeCapture(caps, { document: `{ clubs { id name } }`, identity: "guest" });
+    writeCapture(caps, { document: `{ clubs { id } }`, identity: "a-very-long-identity" });
+    const r = await cli("report", "-s", at("schema.graphql"), "-c", caps, "-o", at("ids", "report.json"));
+    expect(r.out).toMatch(/\n  Identity\s+Output fields requested\n  a-very-long-identity\s+\d+(\.\d+)?% \(2\/\d+\)\n  admin\s+/);
+    const gated = await cli("gate", at("ids", "report.json"), "--min-identities", "2");
+    expect(gated.err).toContain("1 fields in Mutation.* were requested by fewer than 2 identities: Mutation.renameClub (as admin)");
+    const scoped = await cli("gate", at("ids", "report.json"), "--min-identities", "2", "--identity-scope", "Club.*");
+    expect(scoped.err).toContain("1 fields in Club.* were requested by fewer than 2 identities: Club.name (as guest)");
+    const none = await cli("gate", at("invalid", "report.json"), "--min-identities", "1");
+    expect(none.out).not.toContain("Identity");
+    expect(none.err).toContain("--min-identities needs captures that carry an identity");
+  });
+
   it("rejects a malformed --subgraph", async () => {
     await expect(cli("report", "-s", at("schema.graphql"), "-o", at("bad.json"), "--subgraph", "nofile")).rejects.toThrow('--subgraph expects name=path, got "nofile"');
   });

@@ -110,6 +110,25 @@ gqlcov tests .gqlcov/report.json --test "create match" # everything one test tou
 
 In the HTML report each row shows its covering tests, typing a test name in the filter shows everything that test touches, and a Tests section lists what only each test covers. In the JSON, elements carry `tests` and `report.tests` counts operations per test.
 
+## Coverage per identity (roles)
+
+Authorization in GraphQL is per field: the same query can be fine for an admin and leak data to a guest, or the other way round. A field tested only as one role says nothing about the others. Tag each capture with who sent it:
+
+```ts
+useGqlcovCapture({ identity: (ctx) => ctx.user?.role ?? "anonymous" });           // Envelop / Yoga
+gqlcovCapturePlugin({ identity: (ctx) => ctx.user?.role ?? "anonymous" });        // Apollo Server
+await captureGraphQL(page, { identity: "admin", source: testInfo.title });       // Playwright: who this page is logged in as
+```
+
+The report then holds `identities`, output-field coverage per identity (a table in the console and the HTML report), and each field's `identities` counts (tagged "as admin, guest" in the HTML report). Gate on it:
+
+```sh
+gqlcov gate .gqlcov/report.json --min-identities 2                                # every mutation a test ran, as at least 2 roles
+gqlcov gate .gqlcov/report.json --min-identities 2 --identity-scope "Mutation.*" "Player.email"
+```
+
+`--min-identities` checks only fields a test requested (untested ones are already in the coverage numbers), in `--identity-scope` (`Type.field` patterns, default `Mutation.*`). From code: `identityGaps(report, 2, ["Mutation.*"])`.
+
 ## Subscriptions
 
 Subscriptions are captured once, when the client subscribes (events are not counted, and no response data is read from them).
@@ -231,7 +250,7 @@ gqlcov markdown <report> [--base report.json] [-o summary.md]
 gqlcov comment <summary.md> [--id name] [--token t] [--repo owner/name] [--pr n]
 gqlcov merge   <report>... -o merged.json          # parallel shards
 gqlcov diff    <base> <head> [--json]
-gqlcov gate    <report> [--min-fields n] [--min-input-fields n] [--min-input-null n] [--min-enum-values n] [--base report.json] [--tolerance points] [--subgraph name...|'*'] [--min-used-fields n] [--min-used-inputs n] [--require pattern...] [--max-invalid n]       # a missing --base file skips the no-decrease check
+gqlcov gate    <report> [--min-fields n] [--min-input-fields n] [--min-input-null n] [--min-enum-values n] [--base report.json] [--tolerance points] [--subgraph name...|'*'] [--min-used-fields n] [--min-used-inputs n] [--require pattern...] [--max-invalid n] [--min-identities n] [--identity-scope pattern...]       # a missing --base file skips the no-decrease check
 ```
 
 `gate --require` takes the same patterns and fails when any element they match is uncovered, which says "every mutation has a test" more directly than a percentage: `gqlcov gate .gqlcov/report.json --require "Mutation.*" "Query.payment*" "PaymentInput.*"`. A pattern that matches nothing fails too, so a typo cannot pass. Values of output-only enums count as covered once a response returned them.

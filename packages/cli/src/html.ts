@@ -44,7 +44,9 @@ function typeRow(report: CoverageReport, tn: string, label?: string): Row {
       const args = Object.entries(f.args);
       const argText = args.length ? `<span class="args">(${args.map(([an, a]) => `<span class="${a.hits > 0 ? "on" : "off"}" title="${a.hits} hits${a.tests ? `: ${esc(a.tests.join(", "))}` : ""}">${esc(an)}</span>`).join(", ")})</span>` : "";
       const prod = prodBadge(f.requests, f.hits > 0);
-      return `<li class="${f.hits > 0 ? "on" : "off"}" data-n="${esc(fn.toLowerCase())}"${gAttr(f.graphs)}${tAttr(f.tests)}><span class="fname">${esc(fn)}${argText}</span><span class="hits">${noValueBadge(f)}${byTests(f.tests)}${prod}${f.hits > 0 ? `${f.hits}×` : "never"}</span></li>`;
+      const who = f.identities ? Object.keys(f.identities).sort() : [];
+      const idTag = who.length ? `<span class="who" title="identities that requested this field">as ${esc(who.join(", "))}</span>` : "";
+      return `<li class="${f.hits > 0 ? "on" : "off"}" data-n="${esc(fn.toLowerCase())}"${gAttr(f.graphs)}${tAttr(f.tests)}><span class="fname">${esc(fn)}${argText}</span><span class="hits">${noValueBadge(f)}${idTag}${byTests(f.tests)}${prod}${f.hits > 0 ? `${f.hits}×` : "never"}</span></li>`;
     })
     .join("");
   return { name: label ?? tn, covered, total: fields.length, body: `<ul class="fields">${lines}</ul>`, kind: t.kind === "INTERFACE" ? "interface" : "type", uncovered: covered < fields.length, graphs: t.graphs };
@@ -175,6 +177,13 @@ function invalidSection(report: CoverageReport): string {
   return `<section class="invalid"><h2>Operations that do not validate <span class="h2-note">${report.operations.invalid}</span></h2><p class="hint">These captures were not counted. A test sends a query the schema no longer accepts: the test or its fixture has drifted from the schema.</p><div class="row risk-box"><ul class="fields">${items}</ul></div></section>`;
 }
 
+function identityTable(report: CoverageReport): string {
+  const ids = Object.entries(report.identities ?? {});
+  if (!ids.length) return "";
+  const rows = ids.map(([n, r]) => `<tr><th scope="row">${esc(n)}</th><td><span class="mini"><span class="mini-track"><span class="fill ${cls(r.percent)}" style="width:${r.percent}%"></span></span><span class="mini-num">${r.percent}%</span></span><small>${r.covered}/${r.total}</small></td></tr>`).join("");
+  return `<section class="identities"><h2>Identities <span class="h2-note">${ids.length}</span></h2><p class="hint">Output fields each identity requested. A field tested under one role only says nothing about what the others may see; each field is tagged with the identities that requested it.</p><table class="sg"><thead><tr><th>Identity</th><th>Output fields requested</th></tr></thead><tbody>${rows}</tbody></table></section>`;
+}
+
 function subgraphTable(report: CoverageReport): string {
   const names = Object.keys(report.subgraphs ?? {});
   if (!names.length) return "";
@@ -241,7 +250,7 @@ body.only-gaps .row.full:not(.aux),body.only-gaps li.on{display:none}
 .hidden{display:none!important}
 .empty{color:var(--ink2);font-size:14px;padding:12px 0}
 .prod{display:inline-block;margin-right:10px;padding:1px 7px;border-radius:10px;background:var(--track);color:var(--ink2);font-size:11.5px}.prod.risk{background:var(--low);color:#fff}
-.usage,.invalid{margin-bottom:28px}.invalid .fname small{display:block;font-family:inherit}.invalid .src{color:var(--ink2)}.invalid .err{color:var(--low);white-space:normal}.risk-box{padding:0}.risk-head{padding:10px 14px;font-weight:550}.risk-box .fields{border-top:1px solid var(--line)}
+.usage,.invalid,.identities{margin-bottom:28px}.who{display:inline-block;margin-right:10px;padding:1px 7px;border-radius:10px;background:var(--track);color:var(--accent);font-size:11.5px;white-space:normal}.invalid .fname small{display:block;font-family:inherit}.invalid .src{color:var(--ink2)}.invalid .err{color:var(--low);white-space:normal}.risk-box{padding:0}.risk-head{padding:10px 14px;font-weight:550}.risk-box .fields{border-top:1px solid var(--line)}
 .err-badge{display:inline-block;margin-right:10px;padding:1px 7px;border-radius:10px;background:var(--low);color:#fff;font-size:11.5px}
 .noval{display:inline-block;margin-right:10px;padding:1px 7px;border-radius:10px;background:var(--half-bg);color:var(--mid);font-size:11.5px}
 .by{display:inline-block;margin-right:10px;color:var(--accent);font-size:11.5px;max-width:220px;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom}
@@ -277,6 +286,7 @@ ${usageSection(report)}
 ${invalidSection(report)}
 
 ${subgraphTable(report)}
+${identityTable(report)}
 <div class="toolbar"><input type="search" id="q" placeholder="Filter types, fields, values, tests…" aria-label="Filter">${subgraphNames.length ? `<select id="sg" aria-label="Subgraph"><option value="">All subgraphs</option>${subgraphNames.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join("")}</select>` : ""}<label><input type="checkbox" id="gaps"> uncovered only</label><button type="button" id="expand">Expand all</button><button type="button" id="collapse">Collapse</button></div>
 
 ${rootSections(report, schema)}

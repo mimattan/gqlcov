@@ -8,6 +8,8 @@ export interface PlaywrightCaptureOptions {
   dir?: string;
   /** Label written as `source`, e.g. `testInfo.titlePath.join(" > ")`. */
   source?: string;
+  /** Who the page is logged in as, e.g. "admin" or "anonymous", so coverage can be split per identity. */
+  identity?: string;
   /**
    * Persisted-operation manifest file(s): an Apollo persisted query manifest, Relay's persisted output, or any
    * `[{ id, body }]`. Requests that send only an id are resolved to their document at capture time. Without a
@@ -116,7 +118,7 @@ export async function captureGraphQL(target: Page | BrowserContext, options: Pla
   const manifest = manifestFiles.length ? mergePersistedManifests(manifestFiles.map((f) => parsePersistedManifest(readFileSync(f, "utf8")))) : undefined;
   const save = (op: CapturedOperation) => {
     try {
-      writeCapture(dir, { ...op, source: options.source });
+      writeCapture(dir, { ...op, source: options.source, identity: options.identity });
     } catch {
       // ignore
     }

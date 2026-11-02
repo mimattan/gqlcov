@@ -1,4 +1,5 @@
 import { summarise, summariseResponses, tagTest } from "./coverage.js";
+import { summariseIdentities } from "./identities.js";
 import { summariseSubgraphs } from "./subgraphs.js";
 import { summariseUsage } from "./usage.js";
 import type { CoverageReport } from "./types.js";
@@ -37,6 +38,7 @@ export function mergeReports(reports: CoverageReport[]): CoverageReport {
         const of = ot.fields[fn];
         if (!of) continue;
         of.hits += f.hits;
+        for (const [id, h] of Object.entries(f.identities ?? {})) (of.identities ??= {})[id] = (of.identities[id] ?? 0) + h;
         union(of, f);
         if (f.returned) {
           const ret = (of.returned ??= { value: 0, null: 0, empty: 0 });
@@ -81,6 +83,8 @@ export function mergeReports(reports: CoverageReport[]): CoverageReport {
   }
   out.summary = summarise(out);
   summariseResponses(out);
+  const identities = summariseIdentities(out);
+  if (identities) out.identities = identities;
   if (out.subgraphs) out.subgraphs = summariseSubgraphs(out);
   if (out.usage) out.usage = { ...out.usage, ...summariseUsage(out) };
   return out;

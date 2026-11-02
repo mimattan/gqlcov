@@ -29,6 +29,7 @@ import { Excluder } from "./exclude.js";
 import { schemaHash, toSchema } from "./schema.js";
 import { attributeSubgraphs, subgraphsFromSdls, subgraphsFromSupergraph } from "./subgraphs.js";
 import { shapeToValues } from "./outcomes.js";
+import { summariseIdentities } from "./identities.js";
 import { applyUsage } from "./usage.js";
 import { addInvalid } from "./invalid.js";
 import { resolvePersisted, type PersistedManifest } from "./persisted.js";
@@ -355,6 +356,7 @@ export function recordOperation(report: CoverageReport, schema: GraphQLSchema, o
         if (!fc) return;
         fc.hits++;
         tagTest(fc, op.source);
+        if (op.identity) (fc.identities ??= {})[op.identity] = (fc.identities[op.identity] ?? 0) + 1;
         const returned = getNamedType(getNullableType(fieldDef.type));
         const rt = report.types[returned.name];
         if (rt) rt.hits++;
@@ -459,6 +461,8 @@ export function computeCoverage(
   for (const op of resolvePersisted([...operations], persisted)) recordOperation(report, schema, op);
   report.summary = summarise(report);
   summariseResponses(report);
+  const identities = summariseIdentities(report);
+  if (identities) report.identities = identities;
   const membership = subgraphSdls && Object.keys(subgraphSdls).length ? subgraphsFromSdls(subgraphSdls) : subgraphsFromSupergraph(schema);
   if (membership) attributeSubgraphs(report, membership);
   if (usage) applyUsage(report, usage);

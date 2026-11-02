@@ -64,6 +64,17 @@ describe("renderHtml", () => {
     expect(page).not.toMatch(/<span class="fname">name<\/span><span class="hits"><span class="(?:err-badge|noval)"/);
   });
 
+  it("shows coverage per identity and tags each field with the identities that requested it", () => {
+    const page = renderHtml(computeCoverage(schema, [
+      { document: `{ courts { id status } }`, identity: "guest" },
+      { document: `{ courts { id } }`, identity: "admin" },
+    ]), schema);
+    expect(between(page, `<section class="identities">`, "</section>")).toContain(`<th scope="row">admin</th>`);
+    expect(page).toContain(`<span class="fname">id</span><span class="hits"><span class="who" title="identities that requested this field">as admin, guest</span>`);
+    expect(page).toContain(`<span class="fname">status</span><span class="hits"><span class="who" title="identities that requested this field">as guest</span>`);
+    expect(html).not.toContain(`<section class="identities">`);
+  });
+
   it("lists operations that do not validate, with their errors", () => {
     const section = between(html, `<section class="invalid">`, "</section>");
     expect(section).toContain(`<span class="fname">(anonymous)<small class="err">Cannot query field &quot;nope&quot; on type &quot;Query&quot;. Did you mean &quot;node&quot;?</small></span><span class="hits">1×</span>`);

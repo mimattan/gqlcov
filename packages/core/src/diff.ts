@@ -1,3 +1,4 @@
+import { DEFAULT_IDENTITY_SCOPE, identityGaps } from "./identities.js";
 import { globToRegExp } from "./exclude.js";
 import { UNGATED_SUMMARY_KEYS, type CoverageDiff, type CoverageReport, type CoverageSummary, type GateOptions, type GateResult, type UsageJoin } from "./types.js";
 
@@ -104,6 +105,17 @@ export function gate(report: CoverageReport, options: GateOptions): GateResult {
     }
     const missing = matched.filter(([, covered]) => !covered).map(([p]) => p);
     if (missing.length) failures.push(`required "${pattern}": ${missing.length} of ${matched.length} not covered: ${missing.slice(0, 20).join(", ")}${missing.length > 20 ? ` and ${missing.length - 20} more` : ""}`);
+  }
+  if (options.minIdentities !== undefined) {
+    const scope = options.identityScope?.length ? options.identityScope : undefined;
+    if (!report.identities) failures.push(`--min-identities needs captures that carry an identity (the capture layer's identity option)`);
+    else {
+      const gaps = identityGaps(report, options.minIdentities, scope);
+      if (gaps.length) {
+        const shown = gaps.slice(0, 10).map((g) => `${g.path} (${g.identities.length ? `as ${g.identities.join(", ")}` : "no identity"})`);
+        failures.push(`${gaps.length} fields in ${(scope ?? DEFAULT_IDENTITY_SCOPE).join(", ")} were requested by fewer than ${options.minIdentities} identities: ${shown.join(", ")}${gaps.length > 10 ? ", ..." : ""}`);
+      }
+    }
   }
   if (options.maxInvalid !== undefined && report.operations.invalid > options.maxInvalid) {
     const names = (report.invalid ?? []).map((x) => `${x.operationName ?? "(anonymous)"}: ${x.errors[0]}`);

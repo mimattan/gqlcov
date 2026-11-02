@@ -10,6 +10,8 @@ export interface CapturedOperation {
   timestamp?: string;
   /** Free-form origin, e.g. the test file name when the capture layer knows it. */
   source?: string;
+  /** Who sent the operation: a role, user type or test account, e.g. "admin" or "anonymous". */
+  identity?: string;
   /** Enum values that appeared in the response data, by enum name. Server-side capture fills this; wire capture does not. */
   responseEnums?: Record<string, string[]>;
   /** Per selected field ("ParentType.field"), what came back: a value, null, an empty list, or an error. Server-side capture fills this. */
@@ -70,6 +72,8 @@ export interface FieldCoverage {
   tests?: string[];
   /** Operations whose response had this field as a value, as null, or as an empty list. Absent without response data. */
   returned?: ReturnedCounts;
+  /** Requests per identity, for captures that carried one. */
+  identities?: Record<string, number>;
 }
 
 /** An interface or union, and how often each of its possible types came back. */
@@ -232,6 +236,8 @@ export interface CoverageReport {
   abstractTypes?: Record<string, AbstractTypeCoverage>;
   /** Captures whose document did not parse or validate against the schema; present when there were any. */
   invalid?: InvalidOperation[];
+  /** Output-field coverage per identity; present when captures carried an identity. */
+  identities?: Record<string, Ratio>;
 }
 
 /** What one test covered, from the `tests` lists on each element. Paths as in `uncovered`. */
@@ -320,6 +326,10 @@ export interface GateOptions {
   require?: string[];
   /** Maximum number of captured documents that failed to parse or validate against the schema. */
   maxInvalid?: number;
+  /** Every requested field in `identityScope` must have been requested by at least this many distinct identities. */
+  minIdentities?: number;
+  /** "Type.field" patterns for `minIdentities`. Default ["Mutation.*"]. */
+  identityScope?: string[];
 }
 
 export interface GateResult {

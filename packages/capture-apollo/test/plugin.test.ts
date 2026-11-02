@@ -29,9 +29,9 @@ const fresh = () => join(mkdtempSync(join(tmpdir(), "gqlcov-apollo-")), "capture
 describe("gqlcovCapturePlugin", () => {
   it("captures document, operation, variables, source and response enums", async () => {
     const dir = fresh();
-    await run({ dir, enabled: true, source: (ctx) => ctx.who as string }, `query Q($id: ID!) { court(id: $id) { status } }`, { id: "1" }, "Q", { who: "test a" });
+    await run({ dir, enabled: true, source: (ctx) => ctx.who as string, identity: (ctx) => ctx.role as string }, `query Q($id: ID!) { court(id: $id) { status } }`, { id: "1" }, "Q", { who: "test a", role: "admin" });
     const [op] = readCaptures(dir);
-    expect(op).toMatchObject({ operationName: "Q", variables: { id: "1" }, source: "test a", responseEnums: { Status: ["OPEN"] } });
+    expect(op).toMatchObject({ identity: "admin", operationName: "Q", variables: { id: "1" }, source: "test a", responseEnums: { Status: ["OPEN"] } });
     expect(op.responseValues).toEqual({ "Query.court": ["value"], "Court.status": ["value"] });
     expect(op.responseTypes).toEqual({});
   });
@@ -111,11 +111,13 @@ describe("gqlcovSubscriptionCapture", () => {
 
   it("captures the execution args a WebSocket server hands over, with a source", () => {
     const dir = fresh();
-    gqlcovSubscriptionCapture({ dir, enabled: true, source: (ctx) => ctx.who as string })({ document, operationName: "Tick", variableValues: { n: 1 }, contextValue: { who: "ws test" } });
+    gqlcovSubscriptionCapture({ dir, enabled: true, source: (ctx) => ctx.who as string, identity: (ctx) => ctx.role as string })({ document, operationName: "Tick", variableValues: { n: 1 }, contextValue: { who: "ws test", role: "member" } });
+    gqlcovSubscriptionCapture({ dir: `${dir}-noctx`, enabled: true, identity: (ctx) => (Object.keys(ctx).length ? "had" : "none") })({ document });
+    expect(readCaptures(`${dir}-noctx`)[0].identity).toBe("none");
     gqlcovSubscriptionCapture({ dir, enabled: true, source: (ctx) => (Object.keys(ctx).length ? "context" : "no context") })({ document });
     const ops = readCaptures(dir);
     expect(ops).toHaveLength(2);
-    expect(ops[0]).toMatchObject({ operationName: "Tick", variables: { n: 1 }, source: "ws test" });
+    expect(ops[0]).toMatchObject({ operationName: "Tick", variables: { n: 1 }, source: "ws test", identity: "member" });
     expect(ops[0].document).toContain("subscription Tick");
     expect(ops[1]).toMatchObject({ operationName: null, variables: null, source: "no context" });
   });

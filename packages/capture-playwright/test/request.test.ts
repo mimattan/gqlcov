@@ -188,7 +188,7 @@ describe("captureGraphQL with responses", () => {
   it("records each operation when its request finishes, with what the response held", async () => {
     const dir = join(mkdtempSync(join(tmpdir(), "gqlcov-pw-")), "captures");
     const { page, on } = target();
-    await captureGraphQL(page, { dir, source: "t" });
+    await captureGraphQL(page, { dir, source: "t", identity: "guest" });
     expect(on.request).toBeUndefined();
     await on.requestfinished(finished("http://app/graphql", { query: "{ club { logo } }" }, { data: { club: { logo: null } } }));
     await on.requestfinished(finished("http://app/graphql", [{ query: "{ a }" }, { query: "{ b }" }], [{ data: { a: 1 } }]));
@@ -198,6 +198,7 @@ describe("captureGraphQL with responses", () => {
     await on.requestfinished(finished("http://app/graphql", { variables: {} }, { data: {} }));
     on.requestfailed(finished("http://app/graphql", { query: "{ failed }" }, undefined));
     on.requestfailed(finished("http://app/rest", { query: "{ ignored }" }, undefined));
+    expect(readCaptures(dir).every((o) => o.identity === "guest")).toBe(true);
     const ops = readCaptures(dir).map((o) => [o.document, o.responseShape ?? null, o.source]);
     expect(ops.sort((a, b) => String(a[0]).localeCompare(String(b[0])))).toEqual([
       ["{ a }", { a: 1 }, "t"],

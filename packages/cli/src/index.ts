@@ -32,6 +32,7 @@ function printSummary(r: CoverageReport): void {
   if (r.usage) console.log(line("Production fields tested", r.usage.usedFields));
   if (r.usage?.usedInputs) console.log(line("Production inputs sent by a test", r.usage.usedInputs));
   printSubgraphs(r);
+  printIdentities(r);
 }
 
 
@@ -47,6 +48,14 @@ function printUsage(r: CoverageReport): void {
     if (u.untestedUsed.length > 25) console.log(`    ... and ${u.untestedUsed.length - 25} more`);
   }
   if (u.unknown.length) console.log(`  in usage but not in the schema (${u.unknown.length}): ${u.unknown.slice(0, 10).join(", ")}${u.unknown.length > 10 ? ", ..." : ""}`);
+}
+
+function printIdentities(r: CoverageReport): void {
+  const ids = Object.entries(r.identities ?? {});
+  if (!ids.length) return;
+  const w = Math.max(8, ...ids.map(([n]) => n.length));
+  console.log(`\n  ${"Identity".padEnd(w)}  Output fields requested`);
+  for (const [n, x] of ids) console.log(`  ${n.padEnd(w)}  ${String(x.percent).padStart(6)}% (${x.covered}/${x.total})`);
 }
 
 function printInvalid(r: CoverageReport): void {
@@ -278,6 +287,8 @@ export function buildCli(): Command {
     .option("--min-used-fields <pct>", "minimum share of fields with production traffic that are tested (report needs --usage)", parseFloat)
     .option("--require <pattern...>", "every element matching these patterns must be covered, e.g. 'Mutation.*' 'Query.payment*' (same syntax as --exclude)")
     .option("--min-used-inputs <pct>", "minimum share of input fields and enum values with production traffic that a test sent (usage must cover inputs)", parseFloat)
+    .option("--min-identities <n>", "every requested field in --identity-scope must be requested by at least n identities (roles)", (v: string) => parseInt(v, 10))
+    .option("--identity-scope <pattern...>", "Type.field patterns for --min-identities", ["Mutation.*"])
     .option("--max-invalid <n>", "maximum captured operations that do not validate against the schema (0: any stale test query fails)", (v: string) => parseInt(v, 10))
     .action((reportPath: string, o) => {
       const report = readReport(reportPath);
@@ -295,6 +306,8 @@ export function buildCli(): Command {
         minUsedInputs: o.minUsedInputs,
         require: o.require,
         maxInvalid: o.maxInvalid,
+        minIdentities: o.minIdentities,
+        identityScope: o.identityScope,
       });
       printSummary(report);
       if (result.passed) return console.log("  gate: passed");

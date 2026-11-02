@@ -16,3 +16,4 @@ export { parsePersistedManifest, mergePersistedManifests, resolvePersisted, type
 export { toMarkdown, fmtRequests } from "./markdown.js";
 export { collectResponseShape, SHAPE_VALUE, SHAPE_NULL, SHAPE_ERROR, SHAPE_EMPTY } from "./shape.js";
 export { shapeToValues } from "./outcomes.js";
+export { summariseIdentities, identityGaps, DEFAULT_IDENTITY_SCOPE } from "./identities.js";

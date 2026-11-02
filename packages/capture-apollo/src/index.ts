@@ -6,6 +6,8 @@ export interface CaptureOptions {
   dir?: string;
   enabled?: boolean | (() => boolean);
   source?: (context: Record<string, unknown>) => string | undefined;
+  /** Who sent the operation, e.g. the role of the authenticated user, so coverage can be split per identity. */
+  identity?: (context: Record<string, unknown>) => string | undefined;
 }
 
 function isEnabled(opt: CaptureOptions["enabled"]): boolean {
@@ -33,6 +35,7 @@ export function gqlcovCapturePlugin<TContext extends Record<string, unknown> = R
             operationName: ctx.operationName ?? null,
             variables: (ctx.request.variables as Record<string, unknown> | undefined) ?? null,
             source: options.source?.(ctx.contextValue),
+            identity: options.identity?.(ctx.contextValue),
           };
         },
         async willSendResponse(ctx) {
@@ -85,6 +88,7 @@ export function gqlcovSubscriptionCapture(options: CaptureOptions = {}): (args: 
         operationName: args.operationName ?? null,
         variables: args.variableValues ?? null,
         source: options.source?.((args.contextValue as Record<string, unknown> | undefined) ?? {}),
+        identity: options.identity?.((args.contextValue as Record<string, unknown> | undefined) ?? {}),
       });
     } catch {
       // never break a subscription because of coverage capture

@@ -9,6 +9,8 @@ export interface CaptureOptions {
   enabled?: boolean | (() => boolean);
   /** Attach a source label to each capture, e.g. read from a request header set by the test runner. */
   source?: (context: Record<string, unknown>) => string | undefined;
+  /** Who sent the operation, e.g. the role of the authenticated user, so coverage can be split per identity. */
+  identity?: (context: Record<string, unknown>) => string | undefined;
 }
 
 function isEnabled(opt: CaptureOptions["enabled"]): boolean {
@@ -45,6 +47,7 @@ export function useGqlcovCapture(options: CaptureOptions = {}): Plugin {
     operationName: args.operationName ?? null,
     variables: (args.variableValues as Record<string, unknown> | null) ?? null,
     source: options.source?.((args.contextValue as Record<string, unknown>) ?? {}),
+    identity: options.identity?.((args.contextValue as Record<string, unknown>) ?? {}),
   });
   return {
     onSubscribe({ args }) {
