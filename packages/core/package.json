@@ -1,6 +1,6 @@
 {
   "name": "@gqlcov/core",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "GraphQL schema coverage from captured operations: output fields, arguments, input-type fields, enum values and value classes.",
   "license": "MIT",
   "author": "Michael Mattan",
