@@ -3,8 +3,10 @@ import {
   getNullableType,
   GraphQLEnumType,
   GraphQLInputObjectType,
+  GraphQLInterfaceType,
   GraphQLList,
   GraphQLNonNull,
+  GraphQLObjectType,
   GraphQLSchema,
   isEnumType,
   isInputObjectType,
@@ -16,7 +18,7 @@ import {
   parse,
   TypeInfo,
   validate,
-  valueFromAST,
+  valueFromASTUntyped,
   visit,
   visitWithTypeInfo,
   type GraphQLInputType,
@@ -134,12 +136,10 @@ function markEnumReachability(
     queue.push(name);
   };
   for (const [tn, tc] of Object.entries(types)) {
-    const type = schema.getType(tn);
-    if (!isObjectType(type) && !isInterfaceType(type)) continue;
-    const defs = type.getFields();
+    // `types` holds only the schema's object and interface types, with fields taken from it.
+    const defs = (schema.getType(tn) as GraphQLObjectType | GraphQLInterfaceType).getFields();
     for (const [fn, fc] of Object.entries(tc.fields)) {
       const def = defs[fn];
-      if (!def) continue;
       const out = enums[getNamedType(def.type).name];
       if (out) out.output = true;
       for (const arg of def.args) if (fc.args[arg.name]) reach(getNamedType(arg.type).name);
@@ -199,7 +199,7 @@ export function summarise(r: Pick<CoverageReport, "types" | "inputTypes" | "enum
       }
       if (e.output) {
         oT++;
-        if ((v.observed ?? 0) > 0) oC++;
+        if (v.observed > 0) oC++;
       }
     }
   }
@@ -217,19 +217,21 @@ export function summarise(r: Pick<CoverageReport, "types" | "inputTypes" | "enum
 /** Walk a runtime value against its input type, recording input-field presence, enum values and value classes. */
 export function walkInputValue(report: CoverageReport, type: GraphQLInputType, value: unknown, into?: ValueClasses): void {
   if (isNonNullType(type)) type = (type as GraphQLNonNull<GraphQLInputType>).ofType;
+  const list = isListType(type);
+  // GraphQL input coercion: a single value for a list type is a list of one, and is classified as such.
+  if (list && value != null && !Array.isArray(value)) value = [value];
   if (into) classifyValue(value, into);
   if (value === null || value === undefined) return;
 
-  if (isListType(type)) {
+  if (list) {
     const inner = (type as GraphQLList<GraphQLInputType>).ofType;
-    const items = Array.isArray(value) ? value : [value]; // GraphQL input coercion: single value becomes a list of one
-    for (const item of items) walkInputValue(report, inner, item, into);
+    for (const item of value as unknown[]) walkInputValue(report, inner, item, into);
     return;
   }
   if (isEnumType(type)) {
+    // Values arrive as the client wrote them (variables as JSON, literals untyped), so an enum value is its name.
     const ec = report.enums[(type as GraphQLEnumType).name];
-    const name = typeof value === "string" ? value : String(value);
-    if (ec?.values[name]) ec.values[name].hits++;
+    if (typeof value === "string" && ec?.values[value]) ec.values[value].hits++;
     return;
   }
   if (isInputObjectType(type)) {
@@ -298,9 +300,9 @@ export function recordOperation(report: CoverageReport, schema: GraphQLSchema, o
         return undefined;
       },
       Field(node) {
-        const parent = typeInfo.getParentType();
-        const fieldDef = typeInfo.getFieldDef();
-        if (!parent || !fieldDef) return;
+        // The document passed validation, so every field resolves to a parent type and a definition.
+        const parent = typeInfo.getParentType()!;
+        const fieldDef = typeInfo.getFieldDef()!;
         const tc = report.types[parent.name];
         if (!tc) return;
         tc.hits++;
@@ -310,16 +312,13 @@ export function recordOperation(report: CoverageReport, schema: GraphQLSchema, o
         const returned = getNamedType(getNullableType(fieldDef.type));
         const rt = report.types[returned.name];
         if (rt) rt.hits++;
-        for (const argNode of node.arguments ?? []) {
-          const argDef = fieldDef.args.find((a) => a.name === argNode.name.value);
+        for (const argNode of node.arguments!) {
           const ac = fc.args[argNode.name.value];
-          if (!argDef || !ac) continue;
-          let value: unknown;
-          if (argNode.value.kind === Kind.VARIABLE) {
-            value = variables[argNode.value.name.value];
-          } else {
-            value = valueFromAST(argNode.value, argDef.type, variables);
-          }
+          if (!ac) continue; // excluded or deprecated argument
+          const argDef = fieldDef.args.find((a) => a.name === argNode.name.value)!;
+          // Untyped on purpose: typed coercion would add input-field defaults the client never sent and turn
+          // enum names into internal values. Variables inside literals are substituted; missing ones become undefined.
+          const value = valueFromASTUntyped(argNode.value, variables);
           if (value === undefined) continue; // variable not supplied: argument effectively absent
           ac.hits++;
           const vc = report.argumentValues[`${parent.name}.${fieldDef.name}(${argNode.name.value})`];

@@ -1,13 +1,13 @@
-import { getNamedType, isListType, isNonNullType, isObjectType, type GraphQLSchema } from "graphql";
-import type { CoverageReport, Ratio } from "@gqlcov/core";
+import { getNamedType, isListType, isNonNullType, isObjectType, type GraphQLObjectType, type GraphQLSchema } from "graphql";
+import type { CoverageReport, EnumValueCoverage, Ratio } from "@gqlcov/core";
+import { fmtRequests } from "./format.js";
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const pct = (c: number, t: number) => (t === 0 ? 100 : Math.round((c / t) * 1000) / 10);
 const cls = (p: number) => (p >= 80 ? "good" : p >= 40 ? "mid" : p > 0 ? "low" : "none");
-const fmtRequests = (n: number) => (n >= 1e6 ? `${Math.round(n / 1e5) / 10}M` : n >= 1e4 ? `${Math.round(n / 1e3)}k` : String(n));
 
-function ledger(label: string, r: Ratio, note?: string): string {
-  return `<div class="ledger-row"><div class="ledger-head"><span class="ledger-label">${esc(label)}${note ? `<small>${esc(note)}</small>` : ""}</span><span class="ledger-num ${cls(r.percent)}">${r.percent}<span class="unit">%</span></span></div><div class="track"><span class="fill ${cls(r.percent)}" style="width:${r.percent}%"></span></div><div class="ledger-sub">${r.covered} of ${r.total}</div></div>`;
+function ledger(label: string, r: Ratio, note: string): string {
+  return `<div class="ledger-row"><div class="ledger-head"><span class="ledger-label">${esc(label)}<small>${esc(note)}</small></span><span class="ledger-num ${cls(r.percent)}">${r.percent}<span class="unit">%</span></span></div><div class="track"><span class="fill ${cls(r.percent)}" style="width:${r.percent}%"></span></div><div class="ledger-sub">${r.covered} of ${r.total}</div></div>`;
 }
 
 function miniBar(covered: number, total: number): string {
@@ -18,9 +18,9 @@ function miniBar(covered: number, total: number): string {
 interface Row { name: string; covered: number; total: number; body: string; kind: string; uncovered: boolean; graphs?: string[] }
 const gAttr = (graphs?: string[]) => (graphs ? ` data-g="${esc(graphs.join(" "))}"` : "");
 
-function typeRow(report: CoverageReport, tn: string, label?: string): Row | null {
+/** A row for an object or interface type; callers only pass types the report has. */
+function typeRow(report: CoverageReport, tn: string, label?: string): Row {
   const t = report.types[tn];
-  if (!t) return null;
   const fields = Object.entries(t.fields);
   const covered = fields.filter(([, f]) => f.hits > 0).length;
   const lines = fields
@@ -53,9 +53,9 @@ function enumRow(report: CoverageReport, en: string): Row {
   const e = report.enums[en];
   const input = e.input ?? true;
   const values = Object.entries(e.values);
-  const isOn = (v: { hits: number; observed?: number }) => (input ? v.hits > 0 : (v.observed ?? 0) > 0);
+  const isOn = (v: EnumValueCoverage) => (input ? v.hits > 0 : v.observed > 0); // output-only enums exist only in reports that count observed
   const covered = values.filter(([, v]) => isOn(v)).length;
-  const detail = (v: { hits: number; observed?: number }) => {
+  const detail = (v: EnumValueCoverage) => {
     const parts = [input ? (v.hits > 0 ? `sent ${v.hits}` : "never sent") : "", e.output ? (v.observed ? `in ${v.observed} responses` : "not seen in responses") : ""];
     return parts.filter(Boolean).join(", ");
   };
@@ -63,8 +63,8 @@ function enumRow(report: CoverageReport, en: string): Row {
   return { name: en, covered, total: values.length, body: `<ul class="fields">${lines}</ul>`, kind: input ? "enum" : "out enum", uncovered: covered < values.length, graphs: e.graphs };
 }
 
-function renderRow(r: Row, open = false): string {
-  return `<details class="row ${r.uncovered ? "has-gap" : "full"}" data-n="${esc(r.name.toLowerCase())}"${gAttr(r.graphs)}${open ? " open" : ""}><summary><div class="sum"><span class="rname"><span class="kind">${r.kind}</span>${esc(r.name)}</span>${miniBar(r.covered, r.total)}</div></summary>${r.body}</details>`;
+function renderRow(r: Row): string {
+  return `<details class="row ${r.uncovered ? "has-gap" : "full"}" data-n="${esc(r.name.toLowerCase())}"${gAttr(r.graphs)}><summary><div class="sum"><span class="rname"><span class="kind">${r.kind}</span>${esc(r.name)}</span>${miniBar(r.covered, r.total)}</div></summary>${r.body}</details>`;
 }
 
 /** Root operation types and the namespace objects their fields return, e.g. Query.competition -> CompetitionQueries. */
@@ -84,32 +84,27 @@ function rootSections(report: CoverageReport, schema?: GraphQLSchema): string {
   }
   return roots
     .map((root) => {
-      const rt = schema?.getType(root);
+      const rt = schema?.getType(root) as GraphQLObjectType | undefined; // root operation types are object types
       const rows: string[] = [];
       const grouped = new Set<string>();
-      if (rt && isObjectType(rt)) {
+      if (rt) {
         for (const f of Object.values(rt.getFields())) {
-          if (!report.types[root]?.fields[f.name]) continue;
+          if (!report.types[root].fields[f.name]) continue; // excluded root field
           const inner = isNonNullType(f.type) ? f.type.ofType : f.type;
           const named = getNamedType(f.type);
           const isNamespace = !isListType(inner) && f.args.length === 0 && isObjectType(named) && named.name !== root && !!report.types[named.name] && (refs.get(named.name) ?? 0) === 0;
           if (!isNamespace) continue;
-          const r = typeRow(report, named.name, `${root}.${f.name}`);
-          if (r) {
-            rows.push(renderRow(r));
-            grouped.add(f.name);
-          }
+          rows.push(renderRow(typeRow(report, named.name, `${root}.${f.name}`)));
+          grouped.add(f.name);
         }
       }
-      const own = typeRow(report, root);
-      const total = own ? own.total : 0;
+      const total = Object.keys(report.types[root].fields).length;
       let direct = "";
-      if (own && grouped.size < own.total) {
+      if (grouped.size < total) {
         const t = report.types[root];
         const rest = Object.fromEntries(Object.entries(t.fields).filter(([fn]) => !grouped.has(fn)));
         const tmp: CoverageReport = { ...report, types: { ...report.types, [root]: { ...t, fields: rest } } };
-        const r = typeRow(tmp, root, grouped.size ? `${root} (direct fields)` : root);
-        if (r) direct = renderRow(r);
+        direct = renderRow(typeRow(tmp, root, grouped.size ? `${root} (direct fields)` : root));
       }
       return `<section><h2>${esc(root)} <span class="h2-note">${total} root fields</span></h2>${rows.length ? `<p class="hint">Grouped by namespace: each row is a root field and the fields of the type it returns.</p>` : ""}${rows.join("")}${direct}</section>`;
     })
@@ -143,7 +138,7 @@ export function renderHtml(report: CoverageReport, schema?: GraphQLSchema): stri
   const subgraphNames = Object.keys(report.subgraphs ?? {});
   const ops = report.operations;
   const rootNames = new Set(["Query", "Mutation", "Subscription"]);
-  const typeRows = Object.keys(report.types).filter((n) => !rootNames.has(n)).sort().map((n) => typeRow(report, n)!).map((r) => renderRow(r)).join("");
+  const typeRows = Object.keys(report.types).filter((n) => !rootNames.has(n)).sort().map((n) => renderRow(typeRow(report, n))).join("");
   const inputRows = Object.keys(report.inputTypes).sort().map((n) => renderRow(inputRow(report, n))).join("");
   const enumRows = Object.keys(report.enums).sort().map((n) => renderRow(enumRow(report, n))).join("");
   const named = Object.entries(ops.named).sort((a, b) => b[1] - a[1]);

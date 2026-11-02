@@ -100,3 +100,101 @@ describe("Cosmo", () => {
     expect(f.calls[1].body).toEqual({ federatedGraphName: "mygraph", namespace: "default", dateRange: { start: "2026-09-01T00:00:00Z", end: "2026-09-02T00:00:00Z" } });
   });
 });
+
+describe("registry error paths and defaults", () => {
+  const raw = (status: number, text: string): FetchLike => async () => ({ ok: status < 400, status, statusText: status < 400 ? "OK" : "Bad Gateway", text: async () => text });
+
+  it("needs an API key from the option or the environment", async () => {
+    const saved = { a: process.env.APOLLO_KEY, c: process.env.COSMO_API_KEY };
+    delete process.env.APOLLO_KEY;
+    delete process.env.COSMO_API_KEY;
+    try {
+      await expect(fetchApolloSchema("g", { fetchImpl: raw(200, "{}") })).rejects.toThrow("APOLLO_KEY is not set");
+      await expect(fetchCosmoSchema("g", { fetchImpl: raw(200, "{}") })).rejects.toThrow("COSMO_API_KEY is not set");
+      process.env.APOLLO_KEY = "env-key";
+      const f = fake(() => ({ data: { graph: { variants: [], variant: { latestApprovedLaunch: null, latestPublication: { schema: { document: "type Query { a: Int }" } } } } } }));
+      await fetchApolloSchema("g", { fetchImpl: f.fetchImpl });
+      expect(f.calls[0].headers["x-api-key"]).toBe("env-key");
+    } finally {
+      for (const [k, v] of [["APOLLO_KEY", saved.a], ["COSMO_API_KEY", saved.c]] as const) if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+  });
+
+  it("reports non-JSON bodies, GraphQL errors, bare HTTP errors and empty responses", async () => {
+    await expect(fetchApolloSchema("g", { apiKey: "k", fetchImpl: raw(502, "<html>gateway</html>") })).rejects.toThrow("502 Bad Gateway: <html>gateway</html>");
+    await expect(fetchApolloSchema("g", { apiKey: "k", fetchImpl: raw(500, JSON.stringify({ errors: [{ message: "a" }, { message: "b" }] })) })).rejects.toThrow("Bad Gateway: a; b");
+    await expect(fetchApolloSchema("g", { apiKey: "k", fetchImpl: raw(500, "{}") })).rejects.toThrow(/Bad Gateway$/);
+    await expect(fetchApolloSchema("g", { apiKey: "k", fetchImpl: raw(200, JSON.stringify({ errors: [{ message: "nope" }] })) })).rejects.toThrow("GraphOS: nope");
+    await expect(fetchApolloSchema("g", { apiKey: "k", fetchImpl: raw(200, JSON.stringify({ errors: [] })) })).rejects.toThrow("GraphOS: empty response");
+  });
+
+  it("explains a missing graph, a variant list that is empty, and a variant with no schema", async () => {
+    const respond = (data: unknown) => fake(() => ({ data })).fetchImpl;
+    await expect(fetchApolloSchema("g", { apiKey: "k", fetchImpl: respond({ graph: null }) })).rejects.toThrow('no graph "g" visible to this key');
+    await expect(fetchApolloSchema("g", { apiKey: "k", fetchImpl: respond({ graph: { variants: [], variant: null } }) })).rejects.toThrow("(variants: none)");
+    await expect(fetchApolloSchema("g", { apiKey: "k", fetchImpl: respond({ graph: { variants: [], variant: { latestApprovedLaunch: { build: null }, latestPublication: { schema: null } } } }) })).rejects.toThrow("no composed supergraph and no published schema");
+    await expect(fetchApolloUsage("g", { apiKey: "k", fetchImpl: respond({ graph: { variant: null } }) })).rejects.toThrow("no usage report for g@current");
+  });
+
+  it("defaults the usage window to 30 days", async () => {
+    const f = fake(() => ({ data: { graph: { variant: { schemaCoordinateInsightsUsageReport: { records: [] } } } } }));
+    const u = await fetchApolloUsage("g", { apiKey: "k", fetchImpl: f.fetchImpl });
+    expect(f.calls[0].body.variables).toMatchObject({ since: "-2592000" });
+    expect(u.fields).toEqual({});
+  });
+
+  it("checks Cosmo refs and response codes, and survives a failing subgraph lookup", async () => {
+    expect(() => parseCosmoRef("ns/")).toThrow("Expected [namespace/]graph");
+    await expect(fetchCosmoSchema("g", { apiKey: "k", fetchImpl: fake(() => ({ response: { code: "ERR" } })).fetchImpl })).rejects.toThrow(/Cosmo GetFederatedGraphSDLByName: ERR$/);
+    await expect(fetchCosmoSchema("g", { apiKey: "k", fetchImpl: fake(() => ({ response: { code: "OK" } })).fetchImpl })).rejects.toThrow("has no composed schema");
+    const errors: string[] = [];
+    const orig = console.error;
+    console.error = (m: string) => errors.push(m);
+    try {
+      const failing = fake((c) => (c.url.endsWith("GetFederatedGraphSDLByName") ? { sdl: "type Query { a: Int }" } : { response: { code: "ERR_NOT_FOUND" } }));
+      const r = await fetchCosmoSchema("g", { apiKey: "k", fetchImpl: failing.fetchImpl });
+      expect(r.subgraphSdls).toBeUndefined();
+      expect(errors[0]).toMatch(/could not fetch subgraph SDLs.*ERR_NOT_FOUND/);
+      const empty = fake((c) => (c.url.endsWith("GetFederatedGraphSDLByName") ? { sdl: "type Query { a: Int }" } : c.url.endsWith("GetFederatedGraphByName") ? {} : { sdl: "" }));
+      expect((await fetchCosmoSchema("g", { apiKey: "k", fetchImpl: empty.fetchImpl })).subgraphSdls).toBeUndefined();
+      const noSdl = fake((c) => (c.url.endsWith("GetFederatedGraphSDLByName") ? { sdl: "type Query { a: Int }" } : c.url.endsWith("GetFederatedGraphByName") ? { subgraphs: [{ name: "s" }] } : {}));
+      expect((await fetchCosmoSchema("g", { apiKey: "k", fetchImpl: noSdl.fetchImpl })).subgraphSdls).toBeUndefined();
+    } finally {
+      console.error = orig;
+    }
+  });
+
+  it("works out the Cosmo usage window when the server does not echo one", async () => {
+    const f = fake(() => ({ response: { code: "OK" } }));
+    const byRange = await fetchCosmoUsage("g", { apiKey: "k", fetchImpl: f.fetchImpl });
+    expect(f.calls[0].body).toMatchObject({ range: 720 });
+    expect(new Date(byRange.to!).getTime() - new Date(byRange.from!).getTime()).toBe(720 * 3600 * 1000);
+    expect(byRange.fields).toEqual({});
+    const byDates = await fetchCosmoUsage("g", { apiKey: "k", fetchImpl: f.fetchImpl, from: "2026-01-01T00:00:00Z", to: "2026-01-02T00:00:00Z" });
+    expect(byDates).toMatchObject({ from: "2026-01-01T00:00:00Z", to: "2026-01-02T00:00:00Z" });
+    const merged = fake(() => ({ fields: [{ typeName: "Q", fieldName: "a", requestCount: "2" }, { typeName: "Q", fieldName: "a", requestCount: 3 }] }));
+    expect((await fetchCosmoUsage("g", { apiKey: "k", fetchImpl: merged.fetchImpl })).fields).toEqual({ "Q.a": 5 });
+  });
+
+  it("uses the global fetch and environment URLs when none are given", async () => {
+    const saved = { fetch: globalThis.fetch, a: process.env.APOLLO_REGISTRY_URL, c: process.env.COSMO_API_URL };
+    const urls: string[] = [];
+    globalThis.fetch = (async (url: string) => {
+      urls.push(url);
+      const body = url.includes("apollo") ? { data: { graph: { variants: [], variant: { latestApprovedLaunch: null, latestPublication: { schema: { document: "type Query { a: Int }" } } } } } } : { sdl: "type Query { a: Int }", subgraphs: [] };
+      return { ok: true, status: 200, statusText: "OK", text: async () => JSON.stringify(body) };
+    }) as unknown as typeof fetch;
+    process.env.APOLLO_REGISTRY_URL = "http://apollo.test/graphql";
+    process.env.COSMO_API_URL = "http://cosmo.test/";
+    try {
+      await fetchApolloSchema("g", { apiKey: "k" });
+      await fetchCosmoSchema("g", { apiKey: "k" });
+      expect(urls[0]).toBe("http://apollo.test/graphql");
+      expect(urls[1]).toBe("http://cosmo.test/wg.cosmo.platform.v1.PlatformService/GetFederatedGraphSDLByName");
+    } finally {
+      globalThis.fetch = saved.fetch;
+      for (const [k, v] of [["APOLLO_REGISTRY_URL", saved.a], ["COSMO_API_URL", saved.c]] as const) if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+  });
+});
+

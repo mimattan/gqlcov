@@ -212,7 +212,7 @@ For sharded suites, upload each shard's report and run `gqlcov merge` in a final
 
 - Each captured document is parsed and validated against the schema. Invalid documents are counted, not analysed.
 - Fields are walked with `graphql-js` `TypeInfo`, so fragments, interfaces and aliases resolve to the right schema field.
-- Argument values come from variables (`$x`) or literals (`valueFromAST`). A variable that was not supplied counts as an absent argument.
+- Argument values are read as the client wrote them: variables (`$x`) as sent, literals without type coercion, so an input field's default value never counts as sent and enum values count by name. A variable that was not supplied counts as an absent argument or input field.
 - Each value is walked against its input type: input-object fields are marked *sent* or *omitted*, enum values are counted, scalars and lists are classified. Lists recurse into their items; a bare value for a list type is treated as a one-item list, as GraphQL coercion does.
 - A field counts as covered when it was requested at least once. An optional input field counts as "both states" when it was both sent and omitted somewhere in the run.
 
@@ -226,8 +226,11 @@ A mutation with 10 optional input fields has 1,024 presence combinations before 
 npm install
 npm run build
 npm test
+npm run test:coverage                   # fails if any package drops below 99% lines, statements, functions or branches
 cd examples/yoga-e2e && npm run e2e     # capture -> report -> html -> gate against a Yoga server
 ```
+
+CI runs the coverage check; the HTML report lands in `coverage/`.
 
 ## Roadmap
 

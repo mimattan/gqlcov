@@ -53,6 +53,7 @@ export function gate(report: CoverageReport, options: GateOptions): GateResult {
   const d = options.base ? diffReports(options.base, report) : undefined;
   if (options.subgraphs?.length) {
     const wanted = options.subgraphs.includes("*") ? Object.keys(report.subgraphs ?? {}) : options.subgraphs;
+    if (wanted.length === 0) failures.push(`every subgraph was asked for, but the report has no subgraph attribution`);
     for (const name of wanted) {
       const summary = report.subgraphs?.[name];
       if (!summary) {
@@ -95,11 +96,10 @@ export function gate(report: CoverageReport, options: GateOptions): GateResult {
 /** Whether a "Type", "Type.field", "Type.field(arg)", "Input.field" or "Enum.VALUE" path belongs to one of the subgraphs. */
 function pathInSubgraphs(report: CoverageReport, path: string, subgraphs: string[]): boolean {
   if (subgraphs.includes("*")) return true;
-  const m = /^([^.(]+)(?:\.([^.(]+))?(?:\(([^)]+)\))?$/.exec(path);
-  if (!m) return false;
-  const [, tn, fn] = m;
-  const el = fn === undefined ? (report.types[tn] ?? report.inputTypes[tn] ?? report.enums[tn]) : (report.types[tn]?.fields[fn] ?? report.inputTypes[tn]?.fields[fn] ?? report.enums[tn]?.values[fn]);
-  return el?.graphs?.some((g) => subgraphs.includes(g)) ?? false;
+  // Paths come from coveredPaths(report): an object type, its fields and arguments, input fields, enum values.
+  const [, tn, fn] = /^([^.(]+)(?:\.([^.(]+))?/.exec(path)!;
+  const el = fn === undefined ? report.types[tn] : (report.types[tn]?.fields[fn] ?? report.inputTypes[tn]?.fields[fn] ?? report.enums[tn].values[fn]);
+  return el.graphs?.some((g) => subgraphs.includes(g)) ?? false;
 }
 
 /** Uncovered elements, grouped, for the "what to test next" list. */

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { computeCoverage, diffReports, gate, mergeReports, subgraphsFromSdls } from "../src/index.js";
+import { GraphQLEnumType, GraphQLInt, GraphQLObjectType, GraphQLSchema, parse } from "graphql";
+import { computeCoverage, diffReports, gate, mergeReports, subgraphsFromSdls, subgraphsFromSupergraph, summariseSubgraphs } from "../src/index.js";
 
 const supergraph = /* GraphQL */ `
   schema
@@ -162,5 +163,80 @@ describe("subgraph SDL attribution", () => {
     const r = computeCoverage(`type Query { a: Int }`, []);
     expect(r.subgraphs).toBeUndefined();
     expect(r.types.Query.graphs).toBeUndefined();
+  });
+});
+
+describe("unusual supergraph and subgraph shapes", () => {
+  const odd = /* GraphQL */ `
+    directive @join__graph(name: String!, url: String!) on ENUM_VALUE
+    directive @join__type(graph: join__Graph!, key: String) repeatable on OBJECT | INTERFACE | ENUM | INPUT_OBJECT | SCALAR
+    directive @join__field(graph: join__Graph, external: Boolean, type: String) repeatable on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+    directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
+    directive @tag(name: String!) repeatable on OBJECT | FIELD_DEFINITION
+    enum join__Graph { A @join__graph(name: "alpha", url: "x") B }
+    enum Mood @join__type(graph: A) { HAPPY SAD @join__enumValue(graph: A) }
+    type Plain { x: Int }
+    type Thing @tag(name: "t") @join__type(graph: A) @join__type(graph: B) {
+      id: ID!
+      ext: Int @join__field(graph: B, external: true)
+      nograph: Int @join__field(type: "Int")
+      nullgraph: Int @join__field(graph: null)
+      typo: Int @join__field(graph: C)
+    }
+    type Query @join__type(graph: A) { thing: Thing, plain: Plain, mood: Mood }
+  `;
+
+  it("falls back sensibly for every shape", () => {
+    const r = computeCoverage(odd, []);
+    expect(Object.keys(r.subgraphs!)).toEqual(["B", "alpha"]); // B has no @join__graph: its enum name is used
+    expect(r.types.Thing.graphs).toEqual(["B", "alpha"]);
+    expect(r.types.Thing.fields.ext.graphs).toEqual(["B", "alpha"]); // only external: every subgraph of the type
+    expect(r.types.Thing.fields.nograph.graphs).toEqual(["B", "alpha"]);
+    expect(r.types.Thing.fields.nullgraph.graphs).toEqual(["B", "alpha"]);
+    expect(r.types.Thing.fields.typo.graphs).toEqual(["C"]);
+    expect(r.types.Plain.graphs).toBeUndefined(); // no @join__type
+    expect(r.types.Plain.fields.x.graphs).toBeUndefined();
+    expect(r.enums.Mood.values.HAPPY.graphs).toEqual(["alpha"]);
+    expect(r.subgraphs!.alpha.fields.total).toBe(7); // Thing x4 (typo belongs to C), Query x3; Plain.x is in no subgraph
+  });
+
+  it("lets fields without syntax nodes inherit their type's subgraphs", () => {
+    const graph = new GraphQLEnumType({ name: "join__Graph", values: { ONLY: {} } });
+    const def = (sdl: string) => parse(sdl).definitions[0] as never;
+    const Thing = new GraphQLObjectType({ name: "Thing", astNode: def(`type Thing @join__type(graph: ONLY)`), fields: { x: { type: GraphQLInt } } });
+    const Query = new GraphQLObjectType({ name: "Query", astNode: def(`type Query @join__type(graph: ONLY)`), fields: { thing: { type: Thing }, g: { type: graph } } });
+    const m = subgraphsFromSupergraph(new GraphQLSchema({ query: Query }))!;
+    expect(m.names).toEqual(["ONLY"]);
+    expect(m.elements.get("Thing.x")).toEqual(["ONLY"]);
+  });
+
+  it("reads federation__external and ignores scalars, unions and directives in subgraph SDLs", () => {
+    const m = subgraphsFromSdls({
+      a: `scalar Date union U = T directive @x on FIELD type T { id: ID!, b: Int @federation__external } type Query { t: T }`,
+    });
+    expect(m.elements.get("T.b")).toBeUndefined();
+    expect(m.elements.has("Date")).toBe(false);
+  });
+
+  it("leaves elements no subgraph SDL defines unattributed and out of every subgraph", () => {
+    const api = `enum E { X Y } input I { a: Int, b: Int } type T { id: ID!, extra: Int } type Orphan { z: Int } type Query { t(i: I): T, e: E, o: Orphan }`;
+    const r = computeCoverage(api, [], { subgraphSdls: { a: `enum E { X } input I { a: Int } type T { id: ID! } type Query { t(i: I): T, e: E }` } });
+    expect(r.types.T.fields.extra.graphs).toEqual(["a"]); // falls back to its type
+    expect(r.inputTypes.I.fields.b.graphs).toEqual(["a"]);
+    expect(r.enums.E.values.Y.graphs).toEqual(["a"]);
+    expect(r.types.Orphan.fields.z.graphs).toBeUndefined();
+    expect(r.subgraphs!.a.fields.total).toBe(5); // T.id, T.extra, Query.t, Query.e, Query.o
+  });
+
+  it("summarises no subgraphs for a report without attribution, and gates wildcard and unattributed losses", () => {
+    expect(summariseSubgraphs(computeCoverage(`type Query { a: Int }`, []))).toEqual({});
+    const api = `type Query { a: Int, b: Int, orphan: Int }`;
+    const sdls = { s: `type Query { a: Int, b: Int }` };
+    const base = computeCoverage(api, [{ document: `{ a orphan }` }], { subgraphSdls: sdls });
+    const head = computeCoverage(api, [], { subgraphSdls: sdls });
+    // Query.orphan falls back to Query's graphs ["s"]; delete them to model an element no subgraph owns.
+    delete head.types.Query.fields.orphan.graphs;
+    expect(gate(head, { base, subgraphs: ["*"] }).failures.at(-1)).toBe("lost coverage on: Query, Query.a, Query.orphan");
+    expect(gate(head, { base, subgraphs: ["s"] }).failures.at(-1)).toBe("lost coverage on: Query, Query.a");
   });
 });

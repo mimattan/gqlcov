@@ -63,7 +63,7 @@ export function subgraphsFromSupergraph(schema: GraphQLSchema): SubgraphMembersh
 
   for (const type of Object.values(schema.getTypeMap())) {
     if (isFederationInternal(type.name) || type.name.startsWith("__")) continue;
-    const nodes = [type.astNode, ...(type.extensionASTNodes ?? [])].filter(Boolean);
+    const nodes = [type.astNode, ...type.extensionASTNodes].filter(Boolean);
     const typeGraphs = dedupe(nodes.flatMap((n) => graphsOf(n!.directives, "join__type") ?? []));
     if (typeGraphs.length === 0) continue;
     elements.set(type.name, typeGraphs);
@@ -93,8 +93,8 @@ export function subgraphsFromSdls(sdls: Record<string, string>): SubgraphMembers
     const cur = elements.get(path) ?? [];
     if (!cur.includes(graph)) elements.set(path, [...cur, graph].sort());
   };
-  const isExternal = (directives: readonly ConstDirectiveNode[] | undefined) =>
-    directives?.some((d) => d.name.value === "external" || d.name.value === "federation__external") ?? false;
+  // Parsed SDL always carries directive, field and value arrays, even when empty.
+  const isExternal = (directives: readonly ConstDirectiveNode[]) => directives.some((d) => d.name.value === "external" || d.name.value === "federation__external");
 
   for (const [graph, sdl] of Object.entries(sdls)) {
     const doc = parse(sdl, { noLocation: true });
@@ -110,16 +110,16 @@ export function subgraphsFromSdls(sdls: Record<string, string>): SubgraphMembers
         case Kind.INPUT_OBJECT_TYPE_DEFINITION:
         case Kind.INPUT_OBJECT_TYPE_EXTENSION:
           add(tn, graph);
-          for (const f of def.fields ?? []) {
+          for (const f of def.fields!) {
             const path = `${tn}.${f.name.value}`;
-            if (isFederationInternal(path) || isExternal(f.directives)) continue;
+            if (isFederationInternal(path) || isExternal(f.directives!)) continue;
             add(path, graph);
           }
           break;
         case Kind.ENUM_TYPE_DEFINITION:
         case Kind.ENUM_TYPE_EXTENSION:
           add(tn, graph);
-          for (const v of def.values ?? []) add(`${tn}.${v.name.value}`, graph);
+          for (const v of def.values!) add(`${tn}.${v.name.value}`, graph);
           break;
         default:
           break;
