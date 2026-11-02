@@ -8,3 +8,5 @@ export { classifyValue, emptyValueClasses, addValueClasses } from "./values.js";
 export { Excluder } from "./exclude.js";
 export { collectResponseEnums } from "./response.js";
 export { toLcov, toIstanbul, schemaLineMap } from "./export.js";
+export { subgraphsFromSupergraph, subgraphsFromSdls, attributeSubgraphs, summariseSubgraphs, type SubgraphMembership } from "./subgraphs.js";
+export { isFederationInternal } from "./federation.js";

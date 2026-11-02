@@ -25,6 +25,30 @@ function printSummary(r: CoverageReport): void {
   console.log(line("Enum values sent", s.enumValues));
   // Older reports have no observed number.
   if (s.enumValuesObserved) console.log(line("Enum values in responses (not gated)", s.enumValuesObserved));
+  printSubgraphs(r);
+}
+
+function printSubgraphs(r: CoverageReport): void {
+  const names = Object.keys(r.subgraphs ?? {});
+  if (!names.length) return;
+  const w = Math.max(8, ...names.map((n) => n.length));
+  const cell = (x: { percent: number; covered: number; total: number }) => `${String(x.percent).padStart(6)}% (${x.covered}/${x.total})`.padEnd(20);
+  console.log(`\n  ${"Subgraph".padEnd(w)}  ${"Fields".padEnd(20)}  ${"Arguments".padEnd(20)}  ${"Input fields".padEnd(20)}  Enum values`);
+  for (const n of names) {
+    const g = r.subgraphs![n];
+    console.log(`  ${n.padEnd(w)}  ${cell(g.fields)}  ${cell(g.arguments)}  ${cell(g.inputFields)}  ${cell(g.enumValues).trimEnd()}`);
+  }
+}
+
+/** `name=path` pairs into a map of subgraph SDL text. */
+function readSubgraphSdls(list: string[] = []): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const item of list) {
+    const i = item.indexOf("=");
+    if (i <= 0) throw new Error(`--subgraph expects name=path, got "${item}"`);
+    out[item.slice(0, i).trim()] = readFileSync(item.slice(i + 1).trim(), "utf8");
+  }
+  return out;
 }
 
 function parseHeaders(list: string[] = []): Record<string, string> {
@@ -46,6 +70,7 @@ export function buildCli(): Command {
     .option("--schema-out <file>", "where to write the SDL that lcov/istanbul refer to when --schema is an endpoint or introspection JSON", ".gqlcov/schema.graphql")
     .option("-H, --header <header...>", "header for endpoint introspection, e.g. 'Authorization: Bearer x'")
     .option("--exclude <pattern...>", "exclude patterns: Type, Type.field, Type.field(arg), Input.field; * wildcard")
+    .option("--subgraph <name=file...>", "attribute elements to subgraphs from one SDL per subgraph (a composed supergraph needs no option: its @join__ directives are read)")
     .option("--include-deprecated", "count deprecated elements in totals")
     .option("--sha <sha>", "commit SHA for the run", process.env.GITHUB_SHA)
     .option("--branch <name>", "branch for the run", process.env.GITHUB_REF_NAME)
@@ -58,6 +83,7 @@ export function buildCli(): Command {
         exclude: o.exclude,
         excludeDeprecated: !o.includeDeprecated,
         run: { sha: o.sha, branch: o.branch, finishedAt: new Date().toISOString() },
+        subgraphSdls: readSubgraphSdls(o.subgraph),
       });
       writeOut(o.out, JSON.stringify(report, null, 2));
       if (o.html) writeOut(o.html, renderHtml(report, schema));
@@ -108,6 +134,10 @@ export function buildCli(): Command {
       if (o.json) return console.log(JSON.stringify(d, null, 2));
       for (const [k, v] of Object.entries(d.delta)) console.log(`  ${k.padEnd(24)} ${d.base.summary[k as keyof typeof d.base.summary].percent}% -> ${d.head.summary[k as keyof typeof d.head.summary].percent}% (${v >= 0 ? "+" : ""}${v})`);
       const show = (t: string, l: string[]) => l.length && console.log(`\n  ${t} (${l.length}):\n    ${l.join("\n    ")}`);
+      for (const [name, delta] of Object.entries(d.subgraphs ?? {})) {
+        console.log(`\n  subgraph ${name}`);
+        for (const [k, v] of Object.entries(delta)) console.log(`    ${k.padEnd(22)} ${d.base.subgraphs?.[name]?.[k as keyof typeof delta]?.percent}% -> ${d.head.subgraphs?.[name]?.[k as keyof typeof delta]?.percent}% (${v >= 0 ? "+" : ""}${v})`);
+      }
       show("newly covered", d.newlyCovered);
       show("lost coverage", d.lostCoverage);
       show("added to schema", d.schemaAdded);
@@ -123,6 +153,7 @@ export function buildCli(): Command {
     .option("--min-enum-values <pct>", "minimum coverage of enum values sent as input", parseFloat)
     .option("--base <report>", "fail on any decrease versus this report")
     .option("--tolerance <points>", "allowed decrease in percentage points", parseFloat, 0)
+    .option("--subgraph <name...>", "apply the thresholds to these subgraphs instead of the whole schema; * for every subgraph")
     .action((reportPath: string, o) => {
       const report = readReport(reportPath);
       const result = gate(report, {
@@ -131,6 +162,7 @@ export function buildCli(): Command {
         minEnumValues: o.minEnumValues,
         base: o.base ? readReport(o.base) : undefined,
         tolerance: o.tolerance,
+        subgraphs: o.subgraph,
       });
       printSummary(report);
       if (result.passed) return console.log("  gate: passed");

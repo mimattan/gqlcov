@@ -37,12 +37,16 @@ export interface FieldCoverage {
   hits: number;
   deprecated: boolean;
   args: Record<string, ArgCoverage>;
+  /** Subgraphs that resolve this field; set by `attributeSubgraphs`. */
+  graphs?: string[];
 }
 
 export interface TypeCoverage {
   kind: "OBJECT" | "INTERFACE";
   hits: number;
   fields: Record<string, FieldCoverage>;
+  /** Subgraphs that define this type; set by `attributeSubgraphs`. */
+  graphs?: string[];
 }
 
 /** Value classes observed for a scalar, enum or list position. */
@@ -70,12 +74,14 @@ export interface InputFieldCoverage {
   deprecated: boolean;
   required: boolean;
   values: ValueClasses;
+  graphs?: string[];
 }
 
 export interface InputTypeCoverage {
   /** Number of times a value of this input type was sent. */
   hits: number;
   fields: Record<string, InputFieldCoverage>;
+  graphs?: string[];
 }
 
 export interface EnumValueCoverage {
@@ -84,6 +90,7 @@ export interface EnumValueCoverage {
   /** Operations whose response contained the value. */
   observed: number;
   deprecated: boolean;
+  graphs?: string[];
 }
 
 export interface EnumCoverage {
@@ -92,6 +99,7 @@ export interface EnumCoverage {
   /** Returned by an included output field; only these count toward `enumValuesObserved`. */
   output: boolean;
   values: Record<string, EnumValueCoverage>;
+  graphs?: string[];
 }
 
 export interface Ratio {
@@ -141,17 +149,21 @@ export interface CoverageReport {
   enums: Record<string, EnumCoverage>;
   /** Value classes for top-level arguments, keyed "Type.field(arg)". */
   argumentValues: Record<string, ValueClasses>;
+  /** One summary per subgraph, present when the schema was a supergraph or subgraph SDLs were given. */
+  subgraphs?: Record<string, CoverageSummary>;
 }
 
 export interface CoverageDiff {
-  base: { summary: CoverageSummary; generatedAt: string };
-  head: { summary: CoverageSummary; generatedAt: string };
+  base: { summary: CoverageSummary; generatedAt: string; subgraphs?: Record<string, CoverageSummary> };
+  head: { summary: CoverageSummary; generatedAt: string; subgraphs?: Record<string, CoverageSummary> };
   delta: Record<keyof CoverageSummary, number>;
   newlyCovered: string[];
   lostCoverage: string[];
   /** Fields in head's schema that base did not have, and vice versa. */
   schemaAdded: string[];
   schemaRemoved: string[];
+  /** Per-subgraph deltas, for subgraphs present in both reports. */
+  subgraphs?: Record<string, Record<keyof CoverageSummary, number>>;
 }
 
 export interface GateOptions {
@@ -163,6 +175,8 @@ export interface GateOptions {
   base?: CoverageReport;
   /** Tolerance in percentage points for the no-decrease check. Default 0. */
   tolerance?: number;
+  /** Apply the thresholds and the no-decrease check to these subgraphs instead of the whole schema. "*" means every subgraph in the report. */
+  subgraphs?: string[];
 }
 
 export interface GateResult {

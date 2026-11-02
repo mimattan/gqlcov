@@ -72,6 +72,27 @@ gqlcov: 5 operations (3 queries, 2 mutations, 0 subscriptions), schema 9c5b5e1ae
   Enum values                         42.86%  (3/7)
 ```
 
+## Federation: coverage per subgraph
+
+Give gqlcov the composed supergraph and every number is also reported per subgraph, so the team that owns `players` sees and gates only its own surface:
+
+```sh
+rover supergraph fetch my-graph@current > supergraph.graphql     # or: wgc federated-graph fetch my-graph -n default
+gqlcov report -s supergraph.graphql --html .gqlcov/report.html
+gqlcov gate .gqlcov/report.json --min-fields 70 --subgraph players          # one subgraph
+gqlcov gate .gqlcov/report.json --min-fields 70 --subgraph '*'              # every subgraph must pass
+```
+
+Ownership comes from the `@join__type`, `@join__field` and `@join__enumValue` directives in the supergraph; `join__*`, `link__*`, `_entities` and `_service` are left out of the totals. A type or field defined in several subgraphs counts in each of them.
+
+If you only have the API schema (an introspection endpoint, the router, or a composed schema without join directives), pass one SDL per subgraph instead and ownership is read from what each one defines (`@external` fields are not owned):
+
+```sh
+gqlcov report -s http://localhost:4000/graphql --subgraph clubs=subgraphs/clubs.graphql players=subgraphs/players.graphql
+```
+
+The console summary gets a subgraph table, the HTML report gets a subgraph section and a filter, `diff` prints per-subgraph deltas, and `gate --subgraph` applies thresholds and the no-decrease check to the chosen subgraphs only. In the report JSON, every element carries `graphs` and `report.subgraphs` holds one summary per subgraph.
+
 ## Join with code coverage (Codecov, SonarQube, Coveralls, nyc)
 
 gqlcov can emit its result in the two formats coverage services already ingest, with every schema element mapped to its real line in the SDL file. The service then shows `schema.graphql` next to your source files, highlights untested fields in red, and tracks the trend and PR deltas for free.
@@ -104,10 +125,10 @@ When `--schema` is an endpoint or introspection JSON there is no SDL file for th
 ## CLI
 
 ```
-gqlcov report  -s <schema> [-c <dir>...] [-o report.json] [--html out.html] [--lcov lcov.info] [--istanbul coverage-final.json] [--exclude <pattern>...] [--include-deprecated] [--untested] [--sha] [--branch]
+gqlcov report  -s <schema> [-c <dir>...] [-o report.json] [--html out.html] [--lcov lcov.info] [--istanbul coverage-final.json] [--exclude <pattern>...] [--subgraph name=file...] [--include-deprecated] [--untested] [--sha] [--branch]
 gqlcov merge   <report>... -o merged.json          # parallel shards
 gqlcov diff    <base> <head> [--json]
-gqlcov gate    <report> [--min-fields n] [--min-input-fields n] [--min-enum-values n] [--base report.json] [--tolerance points]
+gqlcov gate    <report> [--min-fields n] [--min-input-fields n] [--min-enum-values n] [--base report.json] [--tolerance points] [--subgraph name...|'*']
 ```
 
 Exclude patterns match `Type`, `Type.field`, `Type.field(arg)`, `Input.field` or `Enum.VALUE`, with `*` as a wildcard inside one segment: `--exclude "Query.__*" "Mutation.internal*" "LegacyInput.*"`. Deprecated elements and introspection types are excluded by default.
@@ -170,7 +191,6 @@ cd examples/yoga-e2e && npm run e2e     # capture -> report -> html -> gate agai
 - Cypress helper and a standalone reverse proxy for servers outside your control.
 - Map uncovered fields back to the test that should own them, using the `source` label.
 - GitHub Action with PR annotations.
-- Federation: coverage per subgraph.
 
 ## Releasing
 
