@@ -42,4 +42,11 @@ describe("production usage join", () => {
     expect(m.usage!.usedFields).toMatchObject({ covered: 1, total: 1 });
     expect(m.types.Query.fields.players.requests).toBe(1);
   });
+
+  it("handles no traffic at all, malformed paths and ties", () => {
+    const quiet = computeCoverage(sdl, ops, { usage: { fields: { weird: 4, "Query.legacy": 0 }, to: "2026-11-01T00:00:00Z" } });
+    expect(quiet.usage).toMatchObject({ usedFields: { covered: 0, total: 0, percent: 100 }, unknown: ["weird"], to: "2026-11-01T00:00:00Z" });
+    const tie = computeCoverage(sdl, ops, { usage: { fields: { "Query.player": 5, "Player.rating": 5 } } });
+    expect(tie.usage!.untestedUsed.map((x) => x.path)).toEqual(["Player.rating", "Query.player"]);
+  });
 });
