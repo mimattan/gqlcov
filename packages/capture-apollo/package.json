@@ -1,6 +1,6 @@
 {
   "name": "@gqlcov/capture-apollo",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Apollo Server plugin that writes every executed operation to a capture folder for gqlcov.",
   "license": "MIT",
   "author": "Michael Mattan",
@@ -45,7 +45,7 @@
     "build": "tsc -b"
   },
   "dependencies": {
-    "@gqlcov/core": "0.1.1"
+    "@gqlcov/core": "0.2.0"
   },
   "peerDependencies": {
     "@apollo/server": ">=4",
