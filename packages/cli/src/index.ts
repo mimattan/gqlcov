@@ -259,6 +259,7 @@ export function buildCli(): Command {
     .option("--tolerance <points>", "allowed decrease in percentage points", parseFloat, 0)
     .option("--subgraph <name...>", "apply the thresholds to these subgraphs instead of the whole schema; * for every subgraph")
     .option("--min-used-fields <pct>", "minimum share of fields with production traffic that are tested (report needs --usage)", parseFloat)
+    .option("--require <pattern...>", "every element matching these patterns must be covered, e.g. 'Mutation.*' 'Query.payment*' (same syntax as --exclude)")
     .option("--min-used-inputs <pct>", "minimum share of input fields and enum values with production traffic that a test sent (usage must cover inputs)", parseFloat)
     .action((reportPath: string, o) => {
       const report = readReport(reportPath);
@@ -273,6 +274,7 @@ export function buildCli(): Command {
         subgraphs: o.subgraph,
         minUsedFields: o.minUsedFields,
         minUsedInputs: o.minUsedInputs,
+        require: o.require,
       });
       printSummary(report);
       if (result.passed) return console.log("  gate: passed");

@@ -201,8 +201,10 @@ gqlcov markdown <report> [--base report.json] [-o summary.md]
 gqlcov comment <summary.md> [--id name] [--token t] [--repo owner/name] [--pr n]
 gqlcov merge   <report>... -o merged.json          # parallel shards
 gqlcov diff    <base> <head> [--json]
-gqlcov gate    <report> [--min-fields n] [--min-input-fields n] [--min-enum-values n] [--base report.json] [--tolerance points] [--subgraph name...|'*'] [--min-used-fields n] [--min-used-inputs n]       # a missing --base file skips the no-decrease check
+gqlcov gate    <report> [--min-fields n] [--min-input-fields n] [--min-enum-values n] [--base report.json] [--tolerance points] [--subgraph name...|'*'] [--min-used-fields n] [--min-used-inputs n] [--require pattern...]       # a missing --base file skips the no-decrease check
 ```
+
+`gate --require` takes the same patterns and fails when any element they match is uncovered, which says "every mutation has a test" more directly than a percentage: `gqlcov gate .gqlcov/report.json --require "Mutation.*" "Query.payment*" "PaymentInput.*"`. A pattern that matches nothing fails too, so a typo cannot pass. Values of output-only enums count as covered once a response returned them.
 
 Exclude patterns match `Type`, `Type.field`, `Type.field(arg)`, `Input.field` or `Enum.VALUE`, with `*` as a wildcard inside one segment: `--exclude "Query.__*" "Mutation.internal*" "LegacyInput.*"`. Deprecated elements and introspection types are excluded by default.
 

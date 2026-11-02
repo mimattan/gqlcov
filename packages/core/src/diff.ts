@@ -1,3 +1,4 @@
+import { globToRegExp } from "./exclude.js";
 import { UNGATED_SUMMARY_KEYS, type CoverageDiff, type CoverageReport, type CoverageSummary, type GateOptions, type GateResult, type UsageJoin } from "./types.js";
 
 /** Flatten every coverable element to "path -> covered?" */
@@ -92,11 +93,31 @@ export function gate(report: CoverageReport, options: GateOptions): GateResult {
     else if (u.percent < options.minUsedInputs)
       failures.push(`${u.percent}% of input fields and enum values with production traffic are sent by a test, below the minimum ${options.minUsedInputs}% (${listUntested(report.usage!.untestedUsed, "input")})`);
   }
+  for (const pattern of options.require ?? []) {
+    const re = globToRegExp(pattern);
+    const matched = [...requirablePaths(report)].filter(([p]) => re.test(p));
+    if (!matched.length) {
+      failures.push(`required "${pattern}" matches nothing in the report (excluded and deprecated elements are not in it)`);
+      continue;
+    }
+    const missing = matched.filter(([, covered]) => !covered).map(([p]) => p);
+    if (missing.length) failures.push(`required "${pattern}": ${missing.length} of ${matched.length} not covered: ${missing.slice(0, 20).join(", ")}${missing.length > 20 ? ` and ${missing.length - 20} more` : ""}`);
+  }
   if (d && d.lostCoverage.length > 0) {
     const inScope = options.subgraphs?.length ? d.lostCoverage.filter((p) => pathInSubgraphs(report, p, options.subgraphs!)) : d.lostCoverage;
     if (inScope.length > 0) failures.push(`lost coverage on: ${inScope.slice(0, 20).join(", ")}${inScope.length > 20 ? ` and ${inScope.length - 20} more` : ""}`);
   }
   return { passed: failures.length === 0, failures };
+}
+
+/** Every element `require` can name, and whether it is covered; values of output-only enums count when seen in a response. */
+function requirablePaths(report: CoverageReport): Map<string, boolean> {
+  const m = coveredPaths(report);
+  for (const [en, e] of Object.entries(report.enums)) {
+    if (e.input !== false) continue;
+    for (const [vn, v] of Object.entries(e.values)) m.set(`${en}.${vn}`, v.observed > 0);
+  }
+  return new Map([...m].sort(([a], [b]) => a.localeCompare(b)));
 }
 
 function listUntested(list: UsageJoin["untestedUsed"], which: "field" | "input"): string {

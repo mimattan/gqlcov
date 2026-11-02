@@ -204,3 +204,39 @@ describe("export", () => {
     expect([...schemaLineMap(doc)]).toEqual([["Q.a", 0]]);
   });
 });
+
+describe("gate --require", () => {
+  const s = /* GraphQL */ `
+    enum Status { OPEN CLOSED }
+    enum Currency { EUR USD }
+    input PayInput { amount: Int!, currency: Currency }
+    type Club { id: ID!, status: Status }
+    type Query { club(id: ID!): Club, payments: [Int], paymentLink: String }
+    type Mutation { pay(input: PayInput!): Boolean, refund(id: ID!): Boolean }
+  `;
+  const r = computeCoverage(s, [
+    { document: `mutation { pay(input: { amount: 1, currency: EUR }) }` },
+    { document: `{ club(id: "1") { status } }`, responseEnums: { Status: ["OPEN"] } },
+  ]);
+
+  it("passes when every matching element is covered", () => {
+    expect(gate(r, { require: ["Mutation.pay", "Mutation.pay(input)", "PayInput.*", "Status.OPEN", "Club"] }).passed).toBe(true);
+  });
+
+  it("names what is missing per pattern, counting output-only enum values by what responses returned", () => {
+    const g = gate(r, { require: ["Mutation.*", "Query.payment*", "Currency.*", "Status.*", "**"] });
+    expect(g.failures).toEqual([
+      'required "Mutation.*": 1 of 2 not covered: Mutation.refund',
+      'required "Query.payment*": 2 of 2 not covered: Query.paymentLink, Query.payments',
+      'required "Currency.*": 1 of 2 not covered: Currency.USD',
+      'required "Status.*": 1 of 2 not covered: Status.CLOSED',
+      expect.stringMatching(/^required "\*\*": \d+ of \d+ not covered: Club.id, Currency.USD, /),
+    ]);
+  });
+
+  it("fails a pattern that matches nothing, and shortens long lists", () => {
+    expect(gate(r, { require: ["Mutaton.*"] }).failures).toEqual(['required "Mutaton.*" matches nothing in the report (excluded and deprecated elements are not in it)']);
+    const wide = computeCoverage(`type Query { ${Array.from({ length: 25 }, (_, i) => `f${i}: Int`).join(" ")} }`, []);
+    expect(gate(wide, { require: ["Query.*"] }).failures[0]).toMatch(/^required "Query\.\*": 25 of 25 not covered: .* and 5 more$/);
+  });
+});

@@ -252,6 +252,11 @@ export interface GateOptions {
   minUsedFields?: number;
   /** Minimum percent of input fields and enum values with production traffic that a test sent. Needs usage data covering inputs. */
   minUsedInputs?: number;
+  /**
+   * Patterns (as for `exclude`: "Mutation.*", "Query.payment*", "PaymentInput.*", "Currency.*") whose every matching
+   * element must be covered. A pattern that matches nothing fails too, so a typo cannot pass silently.
+   */
+  require?: string[];
 }
 
 export interface GateResult {

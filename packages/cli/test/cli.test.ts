@@ -314,6 +314,12 @@ describe("gqlcov merge, diff and gate", () => {
     const used = await cli("gate", fullPath, "--min-used-fields", "99");
     expect(used.err).toMatch(/of fields with production traffic are tested/);
     expect((await cli("gate", fullPath)).out).toContain("gate: passed");
+    const required = await cli("gate", fullPath, "--require", "Mutation.*", "Query.clubs");
+    expect(required.code).toBe(0);
+    const missing = await cli("gate", fullPath, "--require", "Query.*", "Nope.*");
+    expect(missing.code).toBe(1);
+    expect(missing.err).toContain('required "Query.*": 1 of 2 not covered: Query.club');
+    expect(missing.err).toContain('required "Nope.*" matches nothing in the report');
     const firstRun = await cli("gate", fullPath, "--base", at("g", "no-base-yet.json"));
     expect(firstRun.out).toContain(`base report ${at("g", "no-base-yet.json")} not found: skipping the no-decrease check`);
     expect(firstRun.code).toBe(0);
